@@ -5,36 +5,94 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AccessLens - AR Accessibility Assistant</title>
     
-    <!-- A-Frame -->
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <!-- A-Frame - Loaded dynamically when needed -->
+    <!-- <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script> -->
     
-    <!-- AR.js -->
-    <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.2/aframe/build/aframe-ar-nft.js"></script>
+    <!-- AR.js - Removed for now, using plain video element for camera feed -->
+    <!-- Can be added back later if marker-based AR is needed -->
     
-    <!-- Styles - Vite will handle this import -->
+    <!-- Styles -->
     <link rel="stylesheet" href="/styles/main.css">
 </head>
 <body>
-    <!-- AR Scene -->
-    <a-scene 
-        embedded 
-        arjs="sourceType: webcam; videoTexture: true; debugUIEnabled: false;"
-        vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true;"
-    >
-        <!-- Camera -->
-        <a-entity camera></a-entity>
+    <!-- Camera Video Feed - Full Screen -->
+    <video 
+        id="camera-video" 
+        autoplay 
+        playsinline 
+        muted
+        class="camera-video"
+    ></video>
+
+    <!-- AR Scene Container - Overlay on camera (hidden until needed) -->
+    <!-- A-Frame will be loaded dynamically when we need AR overlays -->
+    <div id="ar-container" class="ar-container" style="display: none;">
+        <!-- A-Frame scene will be added here when needed -->
+    </div>
+
+    <!-- Sidebar Toggle Button -->
+    <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <h2>AccessLens</h2>
+            <button id="sidebar-close" class="sidebar-close" aria-label="Close sidebar">
+                ×
+            </button>
+        </div>
         
-        <!-- AR Overlays will be added here -->
-        <!-- Speech captions, sign language text, face tags, etc. -->
-    </a-scene>
-    
-    <!-- UI Controls -->
-    <div id="controls" class="controls-panel">
-        <!-- Feature toggles will be added here -->
+        <nav class="sidebar-nav">
+            <div class="nav-section">
+                <h3>Features</h3>
+                <button class="nav-item" id="toggle-speech">
+                    <span class="nav-icon">🗣️</span>
+                    <span class="nav-label">Speech Captions</span>
+                    <span class="nav-status" id="status-speech">Off</span>
+                </button>
+                <button class="nav-item" id="toggle-sign">
+                    <span class="nav-icon">✋</span>
+                    <span class="nav-label">Sign Language</span>
+                    <span class="nav-status" id="status-sign">Off</span>
+                </button>
+                <button class="nav-item" id="toggle-scene">
+                    <span class="nav-icon">👁️</span>
+                    <span class="nav-label">Scene Description</span>
+                    <span class="nav-status" id="status-scene">Off</span>
+                </button>
+                <button class="nav-item" id="toggle-face">
+                    <span class="nav-icon">🧠</span>
+                    <span class="nav-label">Face Recognition</span>
+                    <span class="nav-status" id="status-face">Off</span>
+                </button>
+            </div>
+
+            <div class="nav-section">
+                <h3>Settings</h3>
+                <button class="nav-item" id="settings-btn">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">Settings</span>
+                </button>
+                <button class="nav-item" id="help-btn">
+                    <span class="nav-icon">❓</span>
+                    <span class="nav-label">Help</span>
+                </button>
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Sidebar Overlay (for mobile) -->
+    <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+    <!-- Camera Status Indicator -->
+    <div id="camera-status" class="camera-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Initializing camera...</span>
     </div>
     
-    <!-- Scripts - Vite will handle ES modules -->
+    <!-- Scripts -->
     <script type="module" src="/js/main.js"></script>
 </body>
 </html>

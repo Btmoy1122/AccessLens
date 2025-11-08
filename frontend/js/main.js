@@ -1,31 +1,381 @@
 /**
  * AccessLens - Main Application Entry Point
  * 
- * This file initializes the AR scene and coordinates
- * all feature modules (speech, sign language, vision, etc.)
+ * This file initializes the AR scene, camera, and UI components
  */
 
-// Import feature modules
-// import { initSpeechToText } from '../ml/speech/speech-to-text.js';
-// import { initSignRecognition } from '../ml/sign-language/sign-recognition.js';
-// import { initSceneDescription } from '../ml/vision/scene-description.js';
-// import { initFaceRecognition } from '../ml/vision/face-recognition.js';
+// Application State
+const appState = {
+    sidebarOpen: false,
+    cameraReady: false,
+    cameraStream: null,
+    features: {
+        speech: { enabled: false },
+        sign: { enabled: false },
+        scene: { enabled: false },
+        face: { enabled: false }
+    }
+};
 
-// Initialize AR scene
+// DOM Elements
+let sidebar, sidebarToggle, sidebarClose, sidebarOverlay;
+let cameraStatus, statusDot, statusText;
+
+/**
+ * Initialize the application
+ */
 document.addEventListener('DOMContentLoaded', () => {
     console.log('AccessLens initialized');
     
-    // Initialize camera access
-    // TODO: Add camera permission handling
+    // Ensure body has black background
+    document.body.style.backgroundColor = '#000';
+    document.documentElement.style.backgroundColor = '#000';
     
-    // Initialize feature modules
-    // TODO: Uncomment and initialize each feature
-    // initSpeechToText();
-    // initSignRecognition();
-    // initSceneDescription();
-    // initFaceRecognition();
+    // Get DOM elements
+    initializeDOMElements();
     
-    // Initialize UI controls
-    // TODO: Add feature toggle controls
+    // Initialize sidebar
+    initializeSidebar();
+    
+    // Initialize camera first (most important)
+    initializeCamera();
+    
+    // Initialize feature toggles
+    initializeFeatureToggles();
+    
+    // AR scene initialization deferred - A-Frame not loaded yet
+    // initializeARScene();
+    
+    // Debug: Log video element state
+    setTimeout(() => {
+        const video = document.getElementById('camera-video');
+        if (video) {
+            console.log('Video element state:', {
+                display: window.getComputedStyle(video).display,
+                visibility: window.getComputedStyle(video).visibility,
+                opacity: window.getComputedStyle(video).opacity,
+                srcObject: !!video.srcObject,
+                paused: video.paused,
+                readyState: video.readyState,
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight
+            });
+        }
+    }, 1000);
 });
 
+/**
+ * Get and cache DOM elements
+ */
+function initializeDOMElements() {
+    sidebar = document.getElementById('sidebar');
+    sidebarToggle = document.getElementById('sidebar-toggle');
+    sidebarClose = document.getElementById('sidebar-close');
+    sidebarOverlay = document.getElementById('sidebar-overlay');
+    cameraStatus = document.getElementById('camera-status');
+    statusDot = cameraStatus?.querySelector('.status-dot');
+    statusText = cameraStatus?.querySelector('.status-text');
+}
+
+/**
+ * Initialize sidebar functionality
+ */
+function initializeSidebar() {
+    // Toggle sidebar open/close
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', toggleSidebar);
+    }
+    
+    // Close sidebar button
+    if (sidebarClose) {
+        sidebarClose.addEventListener('click', closeSidebar);
+    }
+    
+    // Close sidebar when clicking overlay (mobile)
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', closeSidebar);
+    }
+    
+    // Close sidebar on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && appState.sidebarOpen) {
+            closeSidebar();
+        }
+    });
+}
+
+/**
+ * Toggle sidebar open/close
+ */
+function toggleSidebar() {
+    appState.sidebarOpen = !appState.sidebarOpen;
+    updateSidebarState();
+}
+
+/**
+ * Close sidebar
+ */
+function closeSidebar() {
+    appState.sidebarOpen = false;
+    updateSidebarState();
+}
+
+/**
+ * Update sidebar visual state
+ */
+function updateSidebarState() {
+    if (sidebar) {
+        if (appState.sidebarOpen) {
+            sidebar.classList.add('open');
+            if (sidebarOverlay) {
+                sidebarOverlay.classList.add('active');
+            }
+        } else {
+            sidebar.classList.remove('open');
+            if (sidebarOverlay) {
+                sidebarOverlay.classList.remove('active');
+            }
+        }
+    }
+}
+
+/**
+ * Initialize camera and check permissions
+ */
+async function initializeCamera() {
+    updateCameraStatus('Requesting camera access...', false);
+    
+    try {
+        // Check if getUserMedia is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Camera API not supported in this browser');
+        }
+        
+        // Request camera access
+        const constraints = {
+            video: { 
+                facingMode: 'environment', // Use back camera on mobile (preferred)
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            } 
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        // Get video element
+        const video = document.getElementById('camera-video');
+        if (!video) {
+            throw new Error('Video element not found');
+        }
+        
+        // Set video source to camera stream
+        video.srcObject = stream;
+        video.muted = true; // Required for autoplay in most browsers
+        
+        // Wait for video metadata to load
+        const playVideo = () => {
+            video.play().then(() => {
+                // Camera feed is ready
+                appState.cameraReady = true;
+                appState.cameraStream = stream;
+                updateCameraStatus('Camera ready', true);
+                console.log('Camera initialized successfully');
+                console.log('Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+                console.log('Video playing:', !video.paused);
+                
+                // Ensure video is visible
+                video.style.display = 'block';
+                video.style.opacity = '1';
+            }).catch(err => {
+                console.error('Error playing video:', err);
+                handleCameraError(err);
+            });
+        };
+        
+        // Try to play immediately
+        if (video.readyState >= 2) {
+            // Video metadata already loaded
+            playVideo();
+        } else {
+            // Wait for metadata
+            video.onloadedmetadata = () => {
+                console.log('Video metadata loaded');
+                playVideo();
+            };
+            
+            // Fallback: try to play after a short delay
+            setTimeout(() => {
+                if (!appState.cameraReady) {
+                    console.log('Attempting to play video after delay');
+                    playVideo();
+                }
+            }, 500);
+        }
+        
+    } catch (error) {
+        console.error('Camera initialization error:', error);
+        handleCameraError(error);
+    }
+}
+
+/**
+ * Update camera status indicator
+ */
+function updateCameraStatus(text, ready = false) {
+    if (statusText) {
+        statusText.textContent = text;
+    }
+    
+    if (cameraStatus) {
+        if (ready) {
+            cameraStatus.classList.add('ready');
+        } else {
+            cameraStatus.classList.remove('ready');
+        }
+    }
+}
+
+/**
+ * Handle camera errors
+ */
+function handleCameraError(error) {
+    let errorMessage = 'Camera error';
+    
+    if (error.name === 'NotAllowedError') {
+        errorMessage = 'Camera permission denied';
+    } else if (error.name === 'NotFoundError') {
+        errorMessage = 'No camera found';
+    } else if (error.name === 'NotReadableError') {
+        errorMessage = 'Camera in use';
+    } else {
+        errorMessage = `Camera error: ${error.message}`;
+    }
+    
+    updateCameraStatus(errorMessage, false);
+    
+    // Show user-friendly error message
+    setTimeout(() => {
+        alert(`Camera Error: ${errorMessage}\n\nPlease grant camera permissions and refresh the page.`);
+    }, 1000);
+}
+
+/**
+ * Initialize feature toggles
+ */
+function initializeFeatureToggles() {
+    // Speech Captions Toggle
+    const toggleSpeech = document.getElementById('toggle-speech');
+    if (toggleSpeech) {
+        toggleSpeech.addEventListener('click', () => toggleFeature('speech'));
+    }
+    
+    // Sign Language Toggle
+    const toggleSign = document.getElementById('toggle-sign');
+    if (toggleSign) {
+        toggleSign.addEventListener('click', () => toggleFeature('sign'));
+    }
+    
+    // Scene Description Toggle
+    const toggleScene = document.getElementById('toggle-scene');
+    if (toggleScene) {
+        toggleScene.addEventListener('click', () => toggleFeature('scene'));
+    }
+    
+    // Face Recognition Toggle
+    const toggleFace = document.getElementById('toggle-face');
+    if (toggleFace) {
+        toggleFace.addEventListener('click', () => toggleFeature('face'));
+    }
+    
+    // Settings Button
+    const settingsBtn = document.getElementById('settings-btn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => {
+            alert('Settings panel - Coming soon!');
+        });
+    }
+    
+    // Help Button
+    const helpBtn = document.getElementById('help-btn');
+    if (helpBtn) {
+        helpBtn.addEventListener('click', () => {
+            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces');
+        });
+    }
+}
+
+/**
+ * Toggle a feature on/off
+ */
+function toggleFeature(featureName) {
+    appState.features[featureName].enabled = !appState.features[featureName].enabled;
+    updateFeatureUI(featureName);
+    
+    console.log(`Feature ${featureName}: ${appState.features[featureName].enabled ? 'enabled' : 'disabled'}`);
+    
+    // TODO: Initialize/stop feature modules here
+    // if (appState.features[featureName].enabled) {
+    //     startFeature(featureName);
+    // } else {
+    //     stopFeature(featureName);
+    // }
+}
+
+/**
+ * Update feature UI state
+ */
+function updateFeatureUI(featureName) {
+    const button = document.getElementById(`toggle-${featureName}`);
+    const status = document.getElementById(`status-${featureName}`);
+    
+    if (button && status) {
+        if (appState.features[featureName].enabled) {
+            button.classList.add('active');
+            status.textContent = 'On';
+        } else {
+            button.classList.remove('active');
+            status.textContent = 'Off';
+        }
+    }
+}
+
+/**
+ * Initialize AR Scene
+ */
+function initializeARScene() {
+    // Don't initialize A-Frame scene immediately
+    // We'll show it when we have AR content to display
+    const arContainer = document.getElementById('ar-container');
+    
+    // Keep AR container hidden for now
+    // It will be shown when we add AR overlays
+    if (arContainer) {
+        arContainer.style.display = 'none';
+    }
+    
+    // Initialize A-Frame scene later when needed
+    // For now, we just use the video feed
+    console.log('AR scene initialization deferred - using video feed only');
+}
+
+/**
+ * Show AR container when we have content
+ */
+function showARContainer() {
+    const arContainer = document.getElementById('ar-container');
+    if (arContainer) {
+        arContainer.style.display = 'block';
+    }
+}
+
+/**
+ * Cleanup camera stream on page unload
+ */
+window.addEventListener('beforeunload', () => {
+    if (appState.cameraStream) {
+        appState.cameraStream.getTracks().forEach(track => track.stop());
+    }
+});
+
+// Export for use in other modules (if needed)
+export { appState, toggleSidebar, closeSidebar };
