@@ -13,7 +13,12 @@ import {
     setAppState 
 } from '@ml/speech/speech-to-text.js';
 // import { initSignRecognition } from '@ml/sign-language/sign-recognition.js';
-// import { initSceneDescription } from '@ml/vision/scene-description.js';
+import { 
+    initSceneDescription, 
+    startDescription, 
+    stopDescription,
+    setVideoElement 
+} from '@ml/vision/scene-description.js';
 // import { initFaceRecognition } from '@ml/vision/face-recognition.js';
 
 // Application State
@@ -56,8 +61,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize feature toggles
     initializeFeatureToggles();
     
-    // Initialize speech-to-text module
-    initializeSpeechToText();
+    // Initialize ML modules (speech-to-text, scene description, etc.)
+    initializeMLModules();
     
     // AR scene initialization deferred - A-Frame not loaded yet
     // initializeARScene();
@@ -204,6 +209,9 @@ async function initializeCamera() {
                 // Ensure video is visible
                 video.style.display = 'block';
                 video.style.opacity = '1';
+                
+                // Set video element for scene description module (when video is actually playing)
+                setVideoElement(video);
             }).catch(err => {
                 console.error('Error playing video:', err);
                 handleCameraError(err);
@@ -338,10 +346,15 @@ function toggleFeature(featureName) {
         } else {
             stopSpeechRecognition();
         }
+    } else if (featureName === 'scene') {
+        if (appState.features.scene.enabled) {
+            startSceneDescription();
+        } else {
+            stopSceneDescription();
+        }
     }
     // TODO: Add other feature handlers
     // else if (featureName === 'sign') { ... }
-    // else if (featureName === 'scene') { ... }
     // else if (featureName === 'face') { ... }
 }
 
@@ -383,6 +396,21 @@ function initializeARScene() {
 }
 
 /**
+ * Initialize all ML modules
+ */
+function initializeMLModules() {
+    // Initialize Speech-to-Text module
+    initializeSpeechToText();
+    
+    // Initialize Scene Description module
+    initializeSceneDescription();
+    
+    // TODO: Initialize other ML modules
+    // initializeSignRecognition();
+    // initializeFaceRecognition();
+}
+
+/**
  * Initialize Speech-to-Text module
  */
 function initializeSpeechToText() {
@@ -408,6 +436,33 @@ function initializeSpeechToText() {
     });
     
     console.log('Speech-to-text module initialized');
+}
+
+/**
+ * Initialize Scene Description module
+ */
+function initializeSceneDescription() {
+    // Initialize scene description model
+    initSceneDescription().then(success => {
+        if (success) {
+            console.log('Scene description module initialized');
+        } else {
+            console.warn('Scene description not available');
+            // Update UI to show it's not available
+            const sceneToggle = document.getElementById('toggle-scene');
+            if (sceneToggle) {
+                sceneToggle.disabled = true;
+                sceneToggle.title = 'Scene description not supported in this browser';
+            }
+        }
+    }).catch(error => {
+        console.error('Error initializing scene description:', error);
+        const sceneToggle = document.getElementById('toggle-scene');
+        if (sceneToggle) {
+            sceneToggle.disabled = true;
+            sceneToggle.title = 'Scene description initialization failed';
+        }
+    });
 }
 
 /**
@@ -446,6 +501,34 @@ function stopSpeechRecognition() {
     stopListening();
     updateCaptions('', false);
     console.log('Speech recognition stopped');
+}
+
+/**
+ * Start scene description
+ */
+function startSceneDescription() {
+    if (!appState.cameraReady) {
+        console.warn('Camera not ready, waiting...');
+        // Wait for camera to be ready
+        const checkCamera = setInterval(() => {
+            if (appState.cameraReady) {
+                clearInterval(checkCamera);
+                startSceneDescription();
+            }
+        }, 500);
+        return;
+    }
+    
+    startDescription();
+    console.log('Scene description started');
+}
+
+/**
+ * Stop scene description
+ */
+function stopSceneDescription() {
+    stopDescription();
+    console.log('Scene description stopped');
 }
 
 /**
