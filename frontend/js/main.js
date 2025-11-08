@@ -55,6 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize sidebar
     initializeSidebar();
     
+    // Initialize draggable captions
+    initializeDraggableCaptions();
+    
     // Initialize camera first (most important)
     initializeCamera();
     
@@ -98,6 +101,160 @@ function initializeDOMElements() {
     statusText = cameraStatus?.querySelector('.status-text');
     captionsContainer = document.getElementById('captions-container');
     captionsText = document.getElementById('captions-text');
+}
+
+/**
+ * Initialize draggable captions
+ */
+function initializeDraggableCaptions() {
+    if (!captionsContainer) return;
+    
+    let isDragging = false;
+    let currentX = 0;
+    let currentY = 0;
+    let initialX = 0;
+    let initialY = 0;
+    let xOffset = 0;
+    let yOffset = 0;
+    
+    // Load saved position from localStorage
+    const savedPosition = localStorage.getItem('captionsPosition');
+    if (savedPosition) {
+        try {
+            const { x, y } = JSON.parse(savedPosition);
+            xOffset = x;
+            yOffset = y;
+            // Wait for container to be rendered before setting position
+            setTimeout(() => {
+                setCaptionsPosition(xOffset, yOffset);
+            }, 100);
+        } catch (e) {
+            console.warn('Failed to load saved captions position:', e);
+        }
+    } else {
+        // Calculate initial position from current CSS position
+        setTimeout(() => {
+            const rect = captionsContainer.getBoundingClientRect();
+            xOffset = rect.left;
+            yOffset = rect.top;
+        }, 100);
+    }
+    
+    // Set initial position
+    function setCaptionsPosition(x, y) {
+        const container = captionsContainer;
+        const rect = container.getBoundingClientRect();
+        const containerWidth = rect.width;
+        const containerHeight = rect.height;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        
+        // Allow positioning all the way to edges
+        // Constrain so at least part of the container is visible
+        const minX = -(containerWidth - 50); // Allow 50px to stick out on left
+        const maxX = viewportWidth - 50; // Allow 50px to stick out on right
+        const minY = 0;
+        const maxY = viewportHeight - containerHeight;
+        
+        x = Math.max(minX, Math.min(x, maxX));
+        y = Math.max(minY, Math.min(y, maxY));
+        
+        container.style.left = x + 'px';
+        container.style.top = y + 'px';
+        container.style.bottom = 'auto';
+        container.style.right = 'auto';
+        container.style.transform = 'none';
+        
+        xOffset = x;
+        yOffset = y;
+    }
+    
+    // Save position to localStorage
+    function saveCaptionsPosition() {
+        localStorage.setItem('captionsPosition', JSON.stringify({
+            x: xOffset,
+            y: yOffset
+        }));
+    }
+    
+    // Mouse events
+    captionsContainer.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+    
+    // Touch events for mobile
+    captionsContainer.addEventListener('touchstart', dragStart, { passive: false });
+    document.addEventListener('touchmove', drag, { passive: false });
+    document.addEventListener('touchend', dragEnd);
+    
+    function dragStart(e) {
+        // Don't start dragging if clicking on text (allow text selection)
+        if (e.target === captionsText && captionsText.textContent.trim()) {
+            // Check if user is trying to select text
+            const selection = window.getSelection();
+            if (selection.toString().length > 0) {
+                return;
+            }
+        }
+        
+        // Get current position from container
+        const rect = captionsContainer.getBoundingClientRect();
+        xOffset = rect.left;
+        yOffset = rect.top;
+        
+        if (e.type === 'touchstart') {
+            initialX = e.touches[0].clientX - xOffset;
+            initialY = e.touches[0].clientY - yOffset;
+        } else {
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+        }
+        
+        if (captionsContainer.contains(e.target) || e.target === captionsContainer) {
+            isDragging = true;
+            captionsContainer.classList.add('dragging');
+            e.preventDefault();
+        }
+    }
+    
+    function drag(e) {
+        if (!isDragging) return;
+        
+        e.preventDefault();
+        
+        if (e.type === 'touchmove') {
+            currentX = e.touches[0].clientX - initialX;
+            currentY = e.touches[0].clientY - initialY;
+        } else {
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+        }
+        
+        setCaptionsPosition(currentX, currentY);
+    }
+    
+    function dragEnd(e) {
+        if (isDragging) {
+            isDragging = false;
+            captionsContainer.classList.remove('dragging');
+            saveCaptionsPosition();
+        }
+    }
+    
+    // Double-click to reset position
+    captionsContainer.addEventListener('dblclick', () => {
+        // Reset to default position (bottom center)
+        const container = captionsContainer;
+        container.style.left = '50%';
+        container.style.top = 'auto';
+        container.style.bottom = '80px';
+        container.style.right = 'auto';
+        container.style.transform = 'translateX(-50%)';
+        
+        xOffset = 0;
+        yOffset = 0;
+        saveCaptionsPosition();
+    });
 }
 
 /**
