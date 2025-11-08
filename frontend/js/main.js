@@ -12,7 +12,14 @@ import {
     setCaptionCallback,
     setAppState 
 } from '@ml/speech/speech-to-text.js';
-// import { initSignRecognition } from '@ml/sign-language/sign-recognition.js';
+import { 
+    initSignRecognition,
+    startDetection,
+    stopDetection,
+    setVideoElement as setSignVideoElement,
+    setDisplayCallback as setSignDisplayCallback,
+    isModuleInitialized as isSignInitialized
+} from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
     startDescription, 
@@ -212,6 +219,9 @@ async function initializeCamera() {
                 
                 // Set video element for scene description module (when video is actually playing)
                 setVideoElement(video);
+                
+                // Set video element for sign language recognition module
+                setSignVideoElement(video);
             }).catch(err => {
                 console.error('Error playing video:', err);
                 handleCameraError(err);
@@ -346,6 +356,12 @@ function toggleFeature(featureName) {
         } else {
             stopSpeechRecognition();
         }
+    } else if (featureName === 'sign') {
+        if (appState.features.sign.enabled) {
+            startSignRecognition();
+        } else {
+            stopSignRecognition();
+        }
     } else if (featureName === 'scene') {
         if (appState.features.scene.enabled) {
             startSceneDescription();
@@ -353,8 +369,7 @@ function toggleFeature(featureName) {
             stopSceneDescription();
         }
     }
-    // TODO: Add other feature handlers
-    // else if (featureName === 'sign') { ... }
+    // TODO: Add face recognition handler
     // else if (featureName === 'face') { ... }
 }
 
@@ -405,8 +420,7 @@ function initializeMLModules() {
     // Initialize Scene Description module
     initializeSceneDescription();
     
-    // TODO: Initialize other ML modules
-    // initializeSignRecognition();
+    // Note: Sign language recognition is lazy-loaded when enabled (see initializeSignRecognition)
     // initializeFaceRecognition();
 }
 
@@ -529,6 +543,113 @@ function startSceneDescription() {
 function stopSceneDescription() {
     stopDescription();
     console.log('Scene description stopped');
+}
+
+/**
+ * Initialize Sign Language Recognition module (lazy-loaded)
+ */
+async function initializeSignRecognition() {
+    // Initialize sign language recognition module
+    const initialized = await initSignRecognition();
+    if (!initialized) {
+        console.warn('Sign language recognition not available');
+        // Update UI to show it's not available
+        const signToggle = document.getElementById('toggle-sign');
+        if (signToggle) {
+            signToggle.disabled = true;
+            signToggle.title = 'Sign language recognition not available';
+        }
+        return false;
+    }
+    
+    // Set up display callback (reuse captions container)
+    setSignDisplayCallback((text, isInterim) => {
+        updateCaptions(text, isInterim);
+    });
+    
+    console.log('Sign language recognition module initialized');
+    return true;
+}
+
+/**
+ * Start sign language recognition
+ */
+async function startSignRecognition() {
+    if (!appState.cameraReady) {
+        console.warn('Camera not ready, waiting...');
+        // Wait for camera to be ready
+        const checkCamera = setInterval(() => {
+            if (appState.cameraReady) {
+                clearInterval(checkCamera);
+                startSignRecognition();
+            }
+        }, 500);
+        return;
+    }
+    
+    // Lazy-load module if not initialized
+    if (!isSignInitialized()) {
+        console.log('Lazy-loading sign language recognition...');
+        updateCaptions('⏳ Loading MediaPipe from CDN... (30-60 seconds)', false);
+        
+        try {
+            const initialized = await initializeSignRecognition();
+            if (!initialized) {
+                console.error('Failed to initialize sign language recognition');
+                updateCaptions('❌ MediaPipe failed to load. CDN files may not be downloading. Open Network tab in DevTools to check.', true);
+                // Disable the feature if it fails
+                appState.features.sign.enabled = false;
+                updateFeatureUI('sign');
+                return;
+            }
+            
+            updateCaptions('✅ MediaPipe loaded! Starting detection...', false);
+            setTimeout(() => {
+                if (appState.features.sign.enabled) {
+                    updateCaptions('', false);
+                }
+            }, 2000);
+        } catch (error) {
+            console.error('Error initializing sign language recognition:', error);
+            const errorMsg = error.message || error.toString();
+            if (errorMsg.includes('assets not loading') || errorMsg.includes('CDN')) {
+                updateCaptions('❌ MediaPipe CDN issue: Files not loading. Check Network tab - look for .data and .tflite files. If they show errors, CDN is blocked.', true);
+            } else {
+                updateCaptions('❌ MediaPipe initialization failed. See console for details.', true);
+            }
+            appState.features.sign.enabled = false;
+            updateFeatureUI('sign');
+            return;
+        }
+    }
+    
+    // Start detection
+    try {
+        await startDetection();
+        console.log('Sign language recognition started');
+        updateCaptions('✋ Sign language detection active', false);
+        
+        // Clear status message after a moment
+        setTimeout(() => {
+            if (appState.features.sign.enabled) {
+                updateCaptions('', false);
+            }
+        }, 2000);
+    } catch (error) {
+        console.error('Error starting sign language detection:', error);
+        updateCaptions('❌ Cannot start: MediaPipe not ready. Disable and re-enable the feature.', true);
+        appState.features.sign.enabled = false;
+        updateFeatureUI('sign');
+    }
+}
+
+/**
+ * Stop sign language recognition
+ */
+function stopSignRecognition() {
+    stopDetection();
+    updateCaptions('', false);
+    console.log('Sign language recognition stopped');
 }
 
 /**
