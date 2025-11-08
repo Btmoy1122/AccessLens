@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AccessLens - AR Accessibility Assistant</title>
+    
+    <!-- A-Frame -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    
+    <!-- AR.js -->
+    <script src="https://cdn.jsdelivr.net/npm/ar.js@3.4.2/aframe/build/aframe-ar-nft.js"></script>
+    
+    <!-- Styles - Vite will handle this import -->
+    <link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+    <!-- AR Scene -->
+    <a-scene 
+        embedded 
+        arjs="sourceType: webcam; videoTexture: true; debugUIEnabled: false;"
+        vr-mode-ui="enabled: false"
+        renderer="logarithmicDepthBuffer: true;"
+    >
+        <!-- Camera -->
+        <a-entity camera></a-entity>
+        
+        <!-- AR Overlays will be added here -->
+        <!-- Speech captions, sign language text, face tags, etc. -->
+    </a-scene>
+    
+    <!-- UI Controls -->
+    <div id="controls" class="controls-panel">
+        <!-- Feature toggles will be added here -->
+    </div>
+    
+    <!-- Scripts - Vite will handle ES modules -->
+    <script type="module" src="/js/main.js"></script>
+</body>
+</html>
+
