@@ -4,6 +4,18 @@
  * This file initializes the AR scene, camera, and UI components
  */
 
+// Import feature modules
+import { 
+    initSpeechToText, 
+    startListening, 
+    stopListening, 
+    setCaptionCallback,
+    setAppState 
+} from '@ml/speech/speech-to-text.js';
+// import { initSignRecognition } from '@ml/sign-language/sign-recognition.js';
+// import { initSceneDescription } from '@ml/vision/scene-description.js';
+// import { initFaceRecognition } from '@ml/vision/face-recognition.js';
+
 // Application State
 const appState = {
     sidebarOpen: false,
@@ -20,6 +32,7 @@ const appState = {
 // DOM Elements
 let sidebar, sidebarToggle, sidebarClose, sidebarOverlay;
 let cameraStatus, statusDot, statusText;
+let captionsContainer, captionsText;
 
 /**
  * Initialize the application
@@ -42,6 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize feature toggles
     initializeFeatureToggles();
+    
+    // Initialize speech-to-text module
+    initializeSpeechToText();
     
     // AR scene initialization deferred - A-Frame not loaded yet
     // initializeARScene();
@@ -75,6 +91,8 @@ function initializeDOMElements() {
     cameraStatus = document.getElementById('camera-status');
     statusDot = cameraStatus?.querySelector('.status-dot');
     statusText = cameraStatus?.querySelector('.status-text');
+    captionsContainer = document.getElementById('captions-container');
+    captionsText = document.getElementById('captions-text');
 }
 
 /**
@@ -313,12 +331,18 @@ function toggleFeature(featureName) {
     
     console.log(`Feature ${featureName}: ${appState.features[featureName].enabled ? 'enabled' : 'disabled'}`);
     
-    // TODO: Initialize/stop feature modules here
-    // if (appState.features[featureName].enabled) {
-    //     startFeature(featureName);
-    // } else {
-    //     stopFeature(featureName);
-    // }
+    // Handle feature-specific logic
+    if (featureName === 'speech') {
+        if (appState.features.speech.enabled) {
+            startSpeechRecognition();
+        } else {
+            stopSpeechRecognition();
+        }
+    }
+    // TODO: Add other feature handlers
+    // else if (featureName === 'sign') { ... }
+    // else if (featureName === 'scene') { ... }
+    // else if (featureName === 'face') { ... }
 }
 
 /**
@@ -356,6 +380,101 @@ function initializeARScene() {
     // Initialize A-Frame scene later when needed
     // For now, we just use the video feed
     console.log('AR scene initialization deferred - using video feed only');
+}
+
+/**
+ * Initialize Speech-to-Text module
+ */
+function initializeSpeechToText() {
+    // Set app state reference for speech module
+    setAppState(appState);
+    
+    // Initialize speech recognition
+    const initialized = initSpeechToText();
+    if (!initialized) {
+        console.warn('Speech recognition not available in this browser');
+        // Update UI to show it's not available
+        const speechToggle = document.getElementById('toggle-speech');
+        if (speechToggle) {
+            speechToggle.disabled = true;
+            speechToggle.title = 'Speech recognition not supported in this browser';
+        }
+        return;
+    }
+    
+    // Set up caption callback
+    setCaptionCallback((text, isInterim) => {
+        updateCaptions(text, isInterim);
+    });
+    
+    console.log('Speech-to-text module initialized');
+}
+
+/**
+ * Start speech recognition
+ */
+function startSpeechRecognition() {
+    if (!appState.cameraReady) {
+        console.warn('Camera not ready, waiting...');
+        // Wait for camera to be ready
+        const checkCamera = setInterval(() => {
+            if (appState.cameraReady) {
+                clearInterval(checkCamera);
+                startSpeechRecognition();
+            }
+        }, 500);
+        return;
+    }
+    
+    const started = startListening();
+    if (started) {
+        console.log('Speech recognition started');
+        updateCaptions('Listening...', false);
+    } else {
+        console.error('Failed to start speech recognition');
+        updateCaptions('Failed to start speech recognition', true);
+        // Disable the feature if it fails
+        appState.features.speech.enabled = false;
+        updateFeatureUI('speech');
+    }
+}
+
+/**
+ * Stop speech recognition
+ */
+function stopSpeechRecognition() {
+    stopListening();
+    updateCaptions('', false);
+    console.log('Speech recognition stopped');
+}
+
+/**
+ * Update captions display
+ */
+function updateCaptions(text, isInterim = false) {
+    if (!captionsText) return;
+    
+    if (!text || text.trim() === '') {
+        // Hide captions
+        captionsText.classList.remove('show', 'interim', 'error');
+        captionsText.textContent = '';
+        return;
+    }
+    
+    // Show captions
+    captionsText.classList.add('show');
+    captionsText.textContent = text;
+    
+    // Update styling based on state
+    if (text.toLowerCase().includes('error') || text.toLowerCase().includes('denied') || text.toLowerCase().includes('failed')) {
+        captionsText.classList.add('error');
+        captionsText.classList.remove('interim');
+    } else if (isInterim) {
+        captionsText.classList.add('interim');
+        captionsText.classList.remove('error');
+    } else {
+        captionsText.classList.remove('interim', 'error');
+    }
 }
 
 /**
