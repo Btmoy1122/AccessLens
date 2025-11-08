@@ -39,6 +39,25 @@ html {
     display: block;
     min-width: 100%;
     min-height: 100%;
+    transition: transform 0.3s ease;
+}
+
+/* Flipped/Mirrored Camera Video */
+.camera-video.flipped {
+    transform: scaleX(-1);
+}
+
+/* Pinch Overlay Canvas - For visual feedback */
+.pinch-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 100;
+    background: transparent;
+    /* Ensure canvas is above video but below UI elements */
 }
 
 /* AR Container - Overlay on camera */
@@ -412,6 +431,49 @@ html {
     border-color: rgba(255, 107, 107, 0.3);
 }
 
+/* Pinch Detection Status */
+.pinch-status {
+    position: fixed;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    pointer-events: none;
+    user-select: none;
+}
+
+.pinch-text {
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 150px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.pinch-text.pinched {
+    background: rgba(76, 175, 80, 0.85);
+    border-color: rgba(76, 175, 80, 0.5);
+    color: #fff;
+}
+
+.pinch-text.not-pinched {
+    background: rgba(0, 0, 0, 0.75);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+}
+
+/* Hide pinch status when sign language is off */
+.pinch-status.hidden {
+    display: none;
+}
+
 /* Responsive captions */
 @media (max-width: 768px) {
     .captions-container {
@@ -423,6 +485,16 @@ html {
     .captions-text {
         font-size: 16px;
         padding: 12px 20px;
+    }
+
+    .pinch-status {
+        bottom: 100px;
+    }
+
+    .pinch-text {
+        font-size: 16px;
+        padding: 10px 20px;
+        min-width: 120px;
     }
 }
 

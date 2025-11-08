@@ -13,6 +13,11 @@
 import { Hands } from '@mediapipe/hands';
 import * as tf from '@tensorflow/tfjs';
 
+// Import element click registry for pinch-to-click functionality
+// This allows direct handler invocation, bypassing browser security restrictions
+let getClickHandler = null;
+let elementClickRegistry = null;
+
 // Configuration constants
 const LANDMARK_BUFFER_SIZE = 30; // Frame buffer for temporal analysis
 const PROCESSING_THROTTLE = 3; // Process every Nth frame for performance
@@ -33,6 +38,24 @@ let lastPrediction = null;
 let predictionTimeout = null;
 let displayCallback = null;
 let animationFrameId = null;
+
+// Pinch detection state
+let PINCH_THRESHOLD = 0.05; // Distance threshold for pinch detection (tune as needed)
+const PINCH_DEBOUNCE_FRAMES = 3; // Number of consecutive frames to confirm state change
+let pinchStateHistory = []; // History of pinch states for debouncing
+let currentPinchState = false; // Current debounced pinch state
+let pinchStatusElement = null; // DOM element for pinch status display
+
+// Pinch-to-click state
+let pinchToClickEnabled = false; // Whether pinch-to-click is enabled
+let lastPinchState = false; // Previous pinch state for detecting transitions
+let pinchOverlayCanvas = null; // Canvas for visual feedback
+let pinchOverlayCtx = null; // Canvas 2D context
+let lastClickTime = 0; // Timestamp of last click to prevent spam
+const CLICK_DEBOUNCE_MS = 300; // Minimum time between clicks (ms)
+let lastPinchClickLocation = null; // Last location where we triggered a click
+const MIN_PINCH_MOVE_DISTANCE = 0.05; // Minimum normalized distance to trigger new click while pinched
+let pinchLocation = null; // Current pinch location {x, y}
 
 // ASL model configuration
 const MODEL_CONFIG = {
@@ -327,6 +350,21 @@ export function setDisplayCallback(callback) {
 }
 
 /**
+ * Set element click registry and handler getter for pinch-to-click
+ * This allows direct handler invocation, bypassing browser security restrictions
+ * @param {Object} registry - Element click registry object
+ * @param {Function} handlerGetter - Function to get click handler for an element
+ */
+export function setClickRegistry(registry, handlerGetter) {
+    elementClickRegistry = registry;
+    getClickHandler = handlerGetter;
+    console.log('Element click registry set for pinch-to-click', {
+        registryKeys: registry ? Object.keys(registry) : 'null',
+        hasHandlerGetter: typeof handlerGetter === 'function'
+    });
+}
+
+/**
  * Start sign language detection
  */
 export async function startDetection() {
@@ -363,6 +401,22 @@ export async function startDetection() {
     isDetecting = true;
     landmarkBuffer = []; // Reset buffer
     frameCount = 0;
+    
+    // Initialize pinch detection state
+    pinchStateHistory = [];
+    currentPinchState = false;
+    lastPinchState = false;
+    
+    // Initialize pinch status element
+    pinchStatusElement = document.getElementById('pinch-text');
+    const pinchContainer = document.getElementById('pinch-status');
+    if (pinchContainer && !pinchContainer.classList.contains('hidden')) {
+        // Ensure it starts hidden until hand is detected
+        pinchContainer.classList.add('hidden');
+    }
+    
+    // Initialize pinch overlay canvas for visual feedback
+    initializePinchOverlay();
     
     // Start processing loop using requestAnimationFrame
     processVideoFrames();
@@ -558,6 +612,17 @@ export function stopDetection() {
         predictionTimeout = null;
     }
 
+    // Clear pinch detection state
+    pinchStateHistory = [];
+    currentPinchState = false;
+    lastPinchState = false;
+    updatePinchStatus(false, false); // Hide pinch status
+    
+    // Clear pinch-to-click visual feedback
+    if (pinchToClickEnabled) {
+        clearPinchVisualFeedback();
+    }
+
     // Clear display
     if (displayCallback) {
         displayCallback('', false);
@@ -576,12 +641,26 @@ function onHandsResults(results) {
 
     // Extract hand landmarks
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        // Process each detected hand
-        for (const landmarks of results.multiHandLandmarks) {
-            processHandLandmarks(landmarks);
+        // Process each detected hand (use first hand for pinch detection)
+        const primaryHand = results.multiHandLandmarks[0];
+        processHandLandmarks(primaryHand);
+        
+        // Process remaining hands if needed (for multi-hand support)
+        if (results.multiHandLandmarks.length > 1) {
+            for (let i = 1; i < results.multiHandLandmarks.length; i++) {
+                // Process additional hands for gesture classification if needed
+                const normalizedLandmarks = normalizeLandmarks(results.multiHandLandmarks[i]);
+                landmarkBuffer.push(normalizedLandmarks);
+                if (landmarkBuffer.length > LANDMARK_BUFFER_SIZE) {
+                    landmarkBuffer.shift();
+                }
+            }
         }
     } else {
-        // No hands detected - clear buffer after delay
+        // No hands detected - clear pinch state and buffer after delay
+        updatePinchStatus(false, false); // Force update to "not pinched"
+        pinchStateHistory = []; // Clear debounce history
+        
         if (landmarkBuffer.length > 0) {
             setTimeout(() => {
                 if (landmarkBuffer.length > 0 && !isDetecting) {
@@ -607,12 +686,228 @@ async function processHandLandmarks(landmarks) {
         landmarkBuffer.shift(); // Remove oldest frame
     }
 
+    // Detect pinch gesture
+    detectPinch(landmarks);
+
     // Classify gesture
     if (aslModel) {
         await classifyGesture(normalizedLandmarks);
     } else {
         // No model available - just log that hands are detected
         console.log('Hands detected (no model for classification)');
+    }
+}
+
+/**
+ * Calculate Euclidean distance between two points
+ * @param {Object} pointA - Point with x, y, z coordinates
+ * @param {Object} pointB - Point with x, y, z coordinates
+ * @returns {number} Distance between the two points
+ */
+function getDistance(pointA, pointB) {
+    const dx = pointA.x - pointB.x;
+    const dy = pointA.y - pointB.y;
+    const dz = (pointA.z || 0) - (pointB.z || 0);
+    
+    // Use 2D distance for pinch detection (x, y only)
+    // Can optionally use 3D: return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return Math.sqrt(dx * dx + dy * dy);
+}
+
+/**
+ * Detect pinch gesture from hand landmarks
+ * @param {Array} landmarks - MediaPipe hand landmarks (21 points)
+ */
+function detectPinch(landmarks) {
+    // Ensure we have enough landmarks
+    if (!landmarks || landmarks.length < 9) {
+        updatePinchStatus(false, false);
+        if (pinchToClickEnabled) {
+            handlePinchRelease();
+        }
+        return;
+    }
+
+    // Get thumb tip (index 4) and index finger tip (index 8)
+    const THUMB_TIP_INDEX = 4;
+    const INDEX_FINGER_TIP_INDEX = 8;
+    
+    const thumbTip = landmarks[THUMB_TIP_INDEX];
+    const indexTip = landmarks[INDEX_FINGER_TIP_INDEX];
+
+    if (!thumbTip || !indexTip) {
+        updatePinchStatus(false, false);
+        if (pinchToClickEnabled) {
+            handlePinchRelease();
+        }
+        return;
+    }
+
+    // Calculate distance between thumb and index finger tips
+    const pinchDistance = getDistance(thumbTip, indexTip);
+
+    // Use index finger tip as the click location (more accurate for clicking)
+    // The index finger is typically what users point with
+    const pinchX = indexTip.x;
+    const pinchY = indexTip.y;
+    
+    // Store pinch location for click simulation
+    pinchLocation = { x: pinchX, y: pinchY };
+
+    // Determine if pinched (distance below threshold)
+    const isPinched = pinchDistance < PINCH_THRESHOLD;
+
+    // Add to debounce history
+    pinchStateHistory.push(isPinched);
+
+    // Maintain debounce history size
+    if (pinchStateHistory.length > PINCH_DEBOUNCE_FRAMES) {
+        pinchStateHistory.shift(); // Remove oldest state
+    }
+
+    // Check if state is consistent across debounce frames
+    if (pinchStateHistory.length >= PINCH_DEBOUNCE_FRAMES) {
+        // Check if all recent frames agree on the state
+        const allAgree = pinchStateHistory.every(state => state === isPinched);
+        
+        if (allAgree) {
+            // All frames agree - update if state changed
+            const stateChanged = isPinched !== currentPinchState;
+            
+            if (stateChanged) {
+                const previousState = currentPinchState;
+                currentPinchState = isPinched;
+                updatePinchStatus(isPinched, true);
+                
+                // Handle pinch-to-click if enabled
+                if (pinchToClickEnabled) {
+                    console.log('🔵 Pinch-to-click enabled, state changed:', {
+                        previousState,
+                        newState: isPinched,
+                        lastPinchState,
+                        willTriggerClick: isPinched && !lastPinchState
+                    });
+                    
+                    if (isPinched && !lastPinchState) {
+                        // Pinch started - simulate click
+                        console.log('🔴 Pinch STARTED - triggering click at:', { x: pinchX, y: pinchY });
+                        handlePinchClick(pinchX, pinchY);
+                        lastPinchClickLocation = { x: pinchX, y: pinchY };
+                    } else if (!isPinched && lastPinchState) {
+                        // Pinch released
+                        console.log('🟢 Pinch RELEASED');
+                        handlePinchRelease();
+                        lastPinchClickLocation = null; // Reset location tracking
+                    }
+                } else {
+                    // Debug: Log why pinch-to-click isn't working
+                    if (isPinched && !lastPinchState) {
+                        console.warn('⚠️ Pinch detected but pinch-to-click is DISABLED. Enable it in settings!');
+                    }
+                }
+                
+                // Update last pinch state AFTER checking transition
+                lastPinchState = isPinched;
+            } else {
+                // State didn't change - but if we're pinched and pinch-to-click is enabled,
+                // we might want to trigger a click if the location changed significantly
+                // For now, just update display
+                if (pinchStateHistory.length === PINCH_DEBOUNCE_FRAMES) {
+                    // Initial state - ensure display is updated
+                    updatePinchStatus(isPinched, true);
+                }
+                
+                // If already pinched and pinch-to-click is enabled, check if location moved significantly
+                if (pinchToClickEnabled && isPinched) {
+                    // Check if pinch location moved significantly since last click
+                    if (lastPinchClickLocation) {
+                        const moveDistance = getDistance(
+                            { x: pinchX, y: pinchY },
+                            lastPinchClickLocation
+                        );
+                        
+                        if (moveDistance > MIN_PINCH_MOVE_DISTANCE) {
+                            // Pinch location moved significantly - trigger click at new location
+                            console.log('🔴 Pinch MOVED - triggering click at new location:', {
+                                x: pinchX,
+                                y: pinchY,
+                                moveDistance: moveDistance.toFixed(3)
+                            });
+                            handlePinchClick(pinchX, pinchY);
+                            lastPinchClickLocation = { x: pinchX, y: pinchY };
+                        }
+                    } else {
+                        // First time pinched - set initial location
+                        lastPinchClickLocation = { x: pinchX, y: pinchY };
+                    }
+                }
+            }
+            
+            // Update visual feedback if enabled
+            if (pinchToClickEnabled && isPinched) {
+                updatePinchVisualFeedback(pinchX, pinchY);
+            } else if (pinchToClickEnabled && !isPinched) {
+                clearPinchVisualFeedback();
+            }
+        } else {
+            // Frames don't agree yet - still debouncing
+            // But we can still update visual feedback if enabled and pinched
+            if (pinchToClickEnabled && isPinched) {
+                updatePinchVisualFeedback(pinchX, pinchY);
+            }
+        }
+        // If frames don't agree, keep current state (prevents flickering)
+    } else {
+        // Not enough frames yet - use current detection for initial display
+        if (pinchStateHistory.length === 1) {
+            // First frame - set initial state
+            currentPinchState = isPinched;
+            updatePinchStatus(isPinched, true);
+        }
+    }
+    
+    // Update last pinch state
+    lastPinchState = isPinched;
+}
+
+/**
+ * Update pinch status display in the UI
+ * @param {boolean} isPinched - Whether hand is currently pinched
+ * @param {boolean} handDetected - Whether a hand is detected
+ */
+function updatePinchStatus(isPinched, handDetected) {
+    // Get or create pinch status element
+    if (!pinchStatusElement) {
+        pinchStatusElement = document.getElementById('pinch-text');
+        const pinchContainer = document.getElementById('pinch-status');
+        
+        if (!pinchStatusElement || !pinchContainer) {
+            // Elements not found - create them if needed
+            console.warn('Pinch status elements not found in DOM');
+            return;
+        }
+    }
+
+    // Show/hide based on hand detection
+    const pinchContainer = document.getElementById('pinch-status');
+    if (pinchContainer) {
+        if (handDetected && isDetecting) {
+            pinchContainer.classList.remove('hidden');
+        } else {
+            pinchContainer.classList.add('hidden');
+            return;
+        }
+    }
+
+    // Update text and styling
+    if (isPinched) {
+        pinchStatusElement.textContent = 'pinch';
+        pinchStatusElement.classList.remove('not-pinched');
+        pinchStatusElement.classList.add('pinched');
+    } else {
+        pinchStatusElement.textContent = 'not pinched';
+        pinchStatusElement.classList.remove('pinched');
+        pinchStatusElement.classList.add('not-pinched');
     }
 }
 
@@ -723,6 +1018,455 @@ export function isActive() {
  */
 export function isModuleInitialized() {
     return isInitialized;
+}
+
+/**
+ * Set pinch detection threshold
+ * @param {number} threshold - Distance threshold for pinch detection (default: 0.05)
+ * Lower values = more sensitive (requires fingers closer together)
+ * Higher values = less sensitive (easier to trigger)
+ */
+export function setPinchThreshold(threshold) {
+    if (typeof threshold === 'number' && threshold > 0 && threshold < 1) {
+        PINCH_THRESHOLD = threshold;
+        console.log(`Pinch threshold updated to: ${threshold}`);
+    } else {
+        console.warn('Invalid pinch threshold. Must be a number between 0 and 1.');
+    }
+}
+
+/**
+ * Get current pinch threshold
+ * @returns {number} Current pinch threshold value
+ */
+export function getPinchThreshold() {
+    return PINCH_THRESHOLD;
+}
+
+/**
+ * Enable or disable pinch-to-click functionality
+ * @param {boolean} enabled - Whether to enable pinch-to-click
+ */
+export function setPinchToClickEnabled(enabled) {
+    pinchToClickEnabled = enabled;
+    
+    if (!enabled) {
+        // Clear visual feedback when disabled
+        clearPinchVisualFeedback();
+        lastPinchState = false;
+    }
+    
+    console.log('Pinch-to-click', enabled ? 'enabled' : 'disabled');
+}
+
+/**
+ * Check if pinch-to-click is enabled
+ * @returns {boolean} Whether pinch-to-click is enabled
+ */
+export function isPinchToClickEnabled() {
+    return pinchToClickEnabled;
+}
+
+/**
+ * Initialize pinch overlay canvas for visual feedback
+ */
+function initializePinchOverlay() {
+    pinchOverlayCanvas = document.getElementById('pinch-overlay');
+    if (!pinchOverlayCanvas) {
+        console.warn('Pinch overlay canvas not found');
+        return;
+    }
+    
+    // Set canvas size to match viewport
+    const resizeCanvas = () => {
+        pinchOverlayCanvas.width = window.innerWidth;
+        pinchOverlayCanvas.height = window.innerHeight;
+    };
+    
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    
+    // Get 2D context
+    pinchOverlayCtx = pinchOverlayCanvas.getContext('2d');
+    if (!pinchOverlayCtx) {
+        console.warn('Failed to get 2D context for pinch overlay');
+    }
+}
+
+/**
+ * Map normalized coordinates (0-1) to screen coordinates
+ * MediaPipe provides coordinates relative to the video frame (0-1)
+ * The video uses object-fit: cover, so we need to account for aspect ratio differences
+ * @param {number} normalizedX - Normalized X coordinate (0-1) from MediaPipe
+ * @param {number} normalizedY - Normalized Y coordinate (0-1) from MediaPipe
+ * @returns {{x: number, y: number}} Screen coordinates in pixels
+ */
+function mapNormalizedToScreen(normalizedX, normalizedY) {
+    const video = videoElement;
+    if (!video) {
+        return { x: normalizedX * window.innerWidth, y: normalizedY * window.innerHeight };
+    }
+    
+    // Get video element's bounding rectangle on screen
+    const rect = video.getBoundingClientRect();
+    const containerWidth = rect.width;
+    const containerHeight = rect.height;
+    
+    // Get actual video frame dimensions (from the video stream)
+    const videoWidth = video.videoWidth || 640;
+    const videoHeight = video.videoHeight || 480;
+    
+    if (videoWidth === 0 || videoHeight === 0) {
+        // Fallback if video dimensions aren't available yet
+        console.warn('Video dimensions not available, using container size');
+        let screenX = normalizedX * containerWidth;
+        let screenY = normalizedY * containerHeight;
+        
+        const isFlipped = video.classList.contains('flipped');
+        if (isFlipped) {
+            screenX = containerWidth - screenX;
+        }
+        
+        return { x: screenX + rect.left, y: screenY + rect.top };
+    }
+    
+    // Calculate aspect ratios
+    const videoAspect = videoWidth / videoHeight;
+    const containerAspect = containerWidth / containerHeight;
+    
+    // Calculate the scale factor and offsets for object-fit: cover
+    // object-fit: cover scales the video to fill the container while maintaining aspect ratio
+    // This means one dimension fits perfectly, and the other is cropped (centered)
+    
+    let scale, screenX, screenY;
+    const videoPixelX = normalizedX * videoWidth;
+    const videoPixelY = normalizedY * videoHeight;
+    
+    if (videoAspect > containerAspect) {
+        // Video is wider than container
+        // Height fits container height, width is cropped from sides
+        scale = containerHeight / videoHeight;
+        
+        // Scaled video dimensions
+        const scaledVideoWidth = videoWidth * scale;
+        
+        // Calculate how much is cropped on each side
+        const croppedWidth = scaledVideoWidth - containerWidth;
+        const cropOffset = croppedWidth / 2;
+        
+        // Map video pixel X to screen X
+        // Video pixel 0 → screen position (cropOffset) from left
+        // Video pixel videoWidth → screen position (containerWidth + cropOffset) from left
+        // So: screenX = (videoPixelX * scale) - cropOffset
+        screenX = (videoPixelX * scale) - cropOffset;
+        
+        // Y maps directly (no cropping vertically)
+        screenY = videoPixelY * scale;
+        
+    } else {
+        // Video is taller than container (or same aspect ratio)
+        // Width fits container width, height is cropped from top/bottom
+        scale = containerWidth / videoWidth;
+        
+        // Scaled video dimensions
+        const scaledVideoHeight = videoHeight * scale;
+        
+        // Calculate how much is cropped on top and bottom
+        const croppedHeight = scaledVideoHeight - containerHeight;
+        const cropOffset = croppedHeight / 2;
+        
+        // X maps directly (no cropping horizontally)
+        screenX = videoPixelX * scale;
+        
+        // Map video pixel Y to screen Y
+        // Video pixel 0 → screen position (cropOffset) from top
+        // Video pixel videoHeight → screen position (containerHeight + cropOffset) from top
+        // So: screenY = (videoPixelY * scale) - cropOffset
+        screenY = (videoPixelY * scale) - cropOffset;
+    }
+    
+    // Clamp to container bounds (safety check)
+    screenX = Math.max(0, Math.min(containerWidth, screenX));
+    screenY = Math.max(0, Math.min(containerHeight, screenY));
+    
+    // Check if video is flipped (mirrored) - if so, flip X coordinate
+    const isFlipped = video.classList.contains('flipped');
+    if (isFlipped) {
+        screenX = containerWidth - screenX;
+    }
+    
+    // Add video element's position offset to get absolute screen coordinates
+    screenX += rect.left;
+    screenY += rect.top;
+    
+    return { x: screenX, y: screenY };
+}
+
+/**
+ * Handle pinch click - invoke click handler directly or simulate click
+ * @param {number} normalizedX - Normalized X coordinate (0-1)
+ * @param {number} normalizedY - Normalized Y coordinate (0-1)
+ */
+function handlePinchClick(normalizedX, normalizedY) {
+    // Prevent click spam
+    const now = Date.now();
+    if (now - lastClickTime < CLICK_DEBOUNCE_MS) {
+        return;
+    }
+    lastClickTime = now;
+    
+    // Map normalized coordinates to screen coordinates
+    const screenCoords = mapNormalizedToScreen(normalizedX, normalizedY);
+    
+    console.log('Pinch click detected at:', screenCoords, 'from normalized:', { x: normalizedX, y: normalizedY });
+    
+    // Find the element at this screen position
+    // Temporarily hide overlay canvas to get the actual element underneath
+    const canvas = document.getElementById('pinch-overlay');
+    const canvasDisplay = canvas ? canvas.style.display : '';
+    if (canvas) {
+        canvas.style.display = 'none';
+    }
+    
+    try {
+        // Get element at the click position
+        const elementAtPoint = document.elementFromPoint(screenCoords.x, screenCoords.y);
+        
+        // Restore canvas immediately
+        if (canvas) {
+            canvas.style.display = canvasDisplay || '';
+        }
+        
+        if (!elementAtPoint) {
+            console.warn('No element found at pinch location:', screenCoords);
+            return;
+        }
+        
+        console.log('Element at pinch location:', {
+            tag: elementAtPoint.tagName,
+            id: elementAtPoint.id,
+            classes: elementAtPoint.className,
+            coordinates: screenCoords
+        });
+        
+        // SOLUTION 1: Direct Handler Invocation (Most Reliable)
+        // Check if we have a registered click handler for this element
+        if (getClickHandler && typeof getClickHandler === 'function') {
+            const handler = getClickHandler(elementAtPoint);
+            
+            if (handler && typeof handler === 'function') {
+                try {
+                    console.log('✅ FOUND HANDLER - Calling registered handler directly for element:', elementAtPoint.id || elementAtPoint.className || elementAtPoint.tagName);
+                    handler();
+                    console.log('✅ HANDLER EXECUTED - Action should have occurred');
+                    return; // Success! No need to try other methods
+                } catch (error) {
+                    console.error('❌ ERROR calling registered handler:', error);
+                    console.error('Stack trace:', error.stack);
+                    // Fall through to backup methods
+                }
+            } else {
+                // Log detailed info about why handler wasn't found
+                console.log('🔍 Handler lookup - no handler found:', {
+                    elementTag: elementAtPoint.tagName,
+                    elementId: elementAtPoint.id || '(no id)',
+                    elementClasses: elementAtPoint.className || '(no classes)',
+                    parentId: elementAtPoint.parentElement?.id || '(no parent id)',
+                    parentClasses: elementAtPoint.parentElement?.className || '(no parent classes)',
+                    registryKeys: elementClickRegistry ? Object.keys(elementClickRegistry) : 'no registry'
+                });
+            }
+        } else {
+            console.warn('⚠️ getClickHandler not available:', {
+                getClickHandler: getClickHandler,
+                type: typeof getClickHandler,
+                hasRegistry: elementClickRegistry !== null
+            });
+        }
+        
+        // FALLBACK: Direct click() method
+        // For elements without registered handlers, try direct click()
+        if (typeof elementAtPoint.click === 'function') {
+            try {
+                // Focus the element first (helps with some elements)
+                if (elementAtPoint.focus && typeof elementAtPoint.focus === 'function') {
+                    elementAtPoint.focus();
+                }
+                
+                // Use requestAnimationFrame for better timing
+                requestAnimationFrame(() => {
+                    try {
+                        elementAtPoint.click();
+                        console.log('Direct click() called on element:', elementAtPoint.tagName, elementAtPoint.id);
+                    } catch (e) {
+                        console.warn('Direct click() failed:', e);
+                    }
+                });
+                return; // Attempted click, exit
+            } catch (e) {
+                console.warn('Direct click() setup failed:', e);
+                // Fall through to event dispatch
+            }
+        }
+        
+        // LAST RESORT: Dispatch mouse events
+        // Only if handler invocation and click() both failed
+        console.log('Attempting event dispatch as last resort');
+        const mouseEventInit = {
+            view: window,
+            bubbles: true,
+            cancelable: true,
+            clientX: screenCoords.x,
+            clientY: screenCoords.y,
+            screenX: screenCoords.x + (window.screenX || 0),
+            screenY: screenCoords.y + (window.screenY || 0),
+            button: 0,
+            buttons: 1,
+            detail: 1
+        };
+        
+        // Try focus first
+        if (elementAtPoint.focus) {
+            elementAtPoint.focus();
+        }
+        
+        // Dispatch mouse events in sequence
+        requestAnimationFrame(() => {
+            try {
+                // Mouseover
+                const mouseover = new MouseEvent('mouseover', mouseEventInit);
+                elementAtPoint.dispatchEvent(mouseover);
+                
+                // Mousemove
+                const mousemove = new MouseEvent('mousemove', mouseEventInit);
+                elementAtPoint.dispatchEvent(mousemove);
+                
+                // Small delay, then click sequence
+                setTimeout(() => {
+                    try {
+                        const mousedown = new MouseEvent('mousedown', mouseEventInit);
+                        elementAtPoint.dispatchEvent(mousedown);
+                        
+                        setTimeout(() => {
+                            try {
+                                const mouseup = new MouseEvent('mouseup', {
+                                    ...mouseEventInit,
+                                    buttons: 0
+                                });
+                                elementAtPoint.dispatchEvent(mouseup);
+                                
+                                setTimeout(() => {
+                                    try {
+                                        const click = new MouseEvent('click', {
+                                            ...mouseEventInit,
+                                            buttons: 0
+                                        });
+                                        const result = elementAtPoint.dispatchEvent(click);
+                                        console.log('Event dispatch click result:', result);
+                                    } catch (e) {
+                                        console.warn('Click event dispatch failed:', e);
+                                    }
+                                }, 10);
+                            } catch (e) {
+                                console.warn('Mouseup event dispatch failed:', e);
+                            }
+                        }, 10);
+                    } catch (e) {
+                        console.warn('Mousedown event dispatch failed:', e);
+                    }
+                }, 50);
+            } catch (e) {
+                console.warn('Event dispatch setup failed:', e);
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error in handlePinchClick:', error);
+        // Restore canvas if there was an error
+        if (canvas) {
+            canvas.style.display = canvasDisplay || '';
+        }
+    }
+}
+
+/**
+ * Handle pinch release - clear visual feedback
+ */
+function handlePinchRelease() {
+    clearPinchVisualFeedback();
+    pinchLocation = null;
+}
+
+/**
+ * Update visual feedback on canvas overlay
+ * @param {number} normalizedX - Normalized X coordinate (0-1)
+ * @param {number} normalizedY - Normalized Y coordinate (0-1)
+ */
+function updatePinchVisualFeedback(normalizedX, normalizedY) {
+    if (!pinchOverlayCanvas || !pinchOverlayCtx) {
+        return;
+    }
+    
+    // Clear canvas
+    pinchOverlayCtx.clearRect(0, 0, pinchOverlayCanvas.width, pinchOverlayCanvas.height);
+    
+    // Map normalized coordinates to screen coordinates
+    const screenCoords = mapNormalizedToScreen(normalizedX, normalizedY);
+    
+    // Debug logging (only occasionally to avoid spam)
+    if (Math.random() < 0.02) { // Log ~2% of frames
+        const video = videoElement;
+        if (video) {
+            console.log('Pinch coordinates:', {
+                normalized: { x: normalizedX.toFixed(3), y: normalizedY.toFixed(3) },
+                screen: { x: Math.round(screenCoords.x), y: Math.round(screenCoords.y) },
+                videoSize: { width: video.videoWidth, height: video.videoHeight },
+                containerSize: { width: video.getBoundingClientRect().width, height: video.getBoundingClientRect().height },
+                aspectRatio: {
+                    video: (video.videoWidth / video.videoHeight).toFixed(2),
+                    container: (video.getBoundingClientRect().width / video.getBoundingClientRect().height).toFixed(2)
+                }
+            });
+        }
+    }
+    
+    // Draw outer circle (white outline for visibility)
+    pinchOverlayCtx.beginPath();
+    pinchOverlayCtx.arc(screenCoords.x, screenCoords.y, 20, 0, 2 * Math.PI);
+    pinchOverlayCtx.strokeStyle = '#ffffff';
+    pinchOverlayCtx.lineWidth = 4;
+    pinchOverlayCtx.stroke();
+    
+    // Draw middle circle (red)
+    pinchOverlayCtx.beginPath();
+    pinchOverlayCtx.arc(screenCoords.x, screenCoords.y, 15, 0, 2 * Math.PI);
+    pinchOverlayCtx.strokeStyle = '#ff0000';
+    pinchOverlayCtx.lineWidth = 3;
+    pinchOverlayCtx.stroke();
+    
+    // Draw inner filled circle
+    pinchOverlayCtx.beginPath();
+    pinchOverlayCtx.arc(screenCoords.x, screenCoords.y, 10, 0, 2 * Math.PI);
+    pinchOverlayCtx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+    pinchOverlayCtx.fill();
+    
+    // Draw center dot
+    pinchOverlayCtx.beginPath();
+    pinchOverlayCtx.arc(screenCoords.x, screenCoords.y, 3, 0, 2 * Math.PI);
+    pinchOverlayCtx.fillStyle = '#ffffff';
+    pinchOverlayCtx.fill();
+}
+
+/**
+ * Clear visual feedback from canvas overlay
+ */
+function clearPinchVisualFeedback() {
+    if (!pinchOverlayCanvas || !pinchOverlayCtx) {
+        return;
+    }
+    
+    // Clear entire canvas
+    pinchOverlayCtx.clearRect(0, 0, pinchOverlayCanvas.width, pinchOverlayCanvas.height);
 }
 
 /**

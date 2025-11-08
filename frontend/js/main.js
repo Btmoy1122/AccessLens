@@ -18,7 +18,10 @@ import {
     stopDetection,
     setVideoElement as setSignVideoElement,
     setDisplayCallback as setSignDisplayCallback,
-    isModuleInitialized as isSignInitialized
+    isModuleInitialized as isSignInitialized,
+    setPinchToClickEnabled,
+    isPinchToClickEnabled,
+    setClickRegistry
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -33,6 +36,7 @@ const appState = {
     sidebarOpen: false,
     cameraReady: false,
     cameraStream: null,
+    cameraFlipped: false, // Camera mirror/flip state
     features: {
         speech: { enabled: false },
         sign: { enabled: false },
@@ -67,6 +71,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize feature toggles
     initializeFeatureToggles();
+    
+    // Initialize camera flip toggle
+    initializeCameraFlip();
     
     // Initialize ML modules (speech-to-text, scene description, etc.)
     initializeMLModules();
@@ -217,11 +224,18 @@ async function initializeCamera() {
                 video.style.display = 'block';
                 video.style.opacity = '1';
                 
+                // Apply saved camera flip preference
+                applyCameraFlip();
+                
                 // Set video element for scene description module (when video is actually playing)
                 setVideoElement(video);
                 
                 // Set video element for sign language recognition module
                 setSignVideoElement(video);
+                
+                // Set click registry for pinch-to-click functionality
+                // This allows direct handler invocation, bypassing browser security restrictions
+                setClickRegistry(elementClickRegistry, getClickHandler);
             }).catch(err => {
                 console.error('Error playing video:', err);
                 handleCameraError(err);
@@ -335,8 +349,51 @@ function initializeFeatureToggles() {
     const helpBtn = document.getElementById('help-btn');
     if (helpBtn) {
         helpBtn.addEventListener('click', () => {
-            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces');
+            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click');
         });
+    }
+    
+    // Pinch to Click Toggle
+    const togglePinchClick = document.getElementById('toggle-pinch-click');
+    if (togglePinchClick) {
+        togglePinchClick.addEventListener('click', togglePinchToClick);
+    }
+}
+
+/**
+ * Toggle pinch-to-click feature
+ */
+function togglePinchToClick() {
+    // Only enable if sign language is enabled
+    if (!appState.features.sign.enabled) {
+        alert('Please enable Sign Language feature first to use Pinch to Click.');
+        return;
+    }
+    
+    const currentState = isPinchToClickEnabled();
+    const newState = !currentState;
+    
+    setPinchToClickEnabled(newState);
+    updatePinchClickUI(newState);
+    
+    console.log('Pinch-to-click toggled:', newState ? 'enabled' : 'disabled');
+}
+
+/**
+ * Update pinch-to-click button UI
+ */
+function updatePinchClickUI(enabled) {
+    const toggleButton = document.getElementById('toggle-pinch-click');
+    const statusElement = document.getElementById('status-pinch-click');
+    
+    if (toggleButton && statusElement) {
+        if (enabled) {
+            toggleButton.classList.add('active');
+            statusElement.textContent = 'On';
+        } else {
+            toggleButton.classList.remove('active');
+            statusElement.textContent = 'Off';
+        }
     }
 }
 
@@ -623,6 +680,15 @@ async function startSignRecognition() {
         }
     }
     
+    // Ensure click registry is set before starting detection
+    // This is critical for pinch-to-click functionality
+    try {
+        setClickRegistry(elementClickRegistry, getClickHandler);
+        console.log('Click registry set for pinch-to-click');
+    } catch (error) {
+        console.warn('Failed to set click registry:', error);
+    }
+    
     // Start detection
     try {
         await startDetection();
@@ -649,6 +715,13 @@ async function startSignRecognition() {
 function stopSignRecognition() {
     stopDetection();
     updateCaptions('', false);
+    
+    // Disable pinch-to-click when sign language is disabled
+    if (isPinchToClickEnabled()) {
+        setPinchToClickEnabled(false);
+        updatePinchClickUI(false);
+    }
+    
     console.log('Sign language recognition stopped');
 }
 
@@ -692,6 +765,81 @@ function showARContainer() {
 }
 
 /**
+ * Initialize camera flip toggle
+ */
+function initializeCameraFlip() {
+    // Load saved preference from localStorage
+    const savedFlipState = localStorage.getItem('cameraFlipped');
+    if (savedFlipState === 'true') {
+        appState.cameraFlipped = true;
+    }
+    
+    // Get toggle button
+    const flipButton = document.getElementById('toggle-flip-camera');
+    if (!flipButton) {
+        return;
+    }
+    
+    // Update button state
+    updateFlipCameraUI();
+    
+    // Add click event listener
+    flipButton.addEventListener('click', toggleCameraFlip);
+}
+
+/**
+ * Toggle camera flip/mirror state
+ */
+function toggleCameraFlip() {
+    appState.cameraFlipped = !appState.cameraFlipped;
+    
+    // Save preference to localStorage
+    localStorage.setItem('cameraFlipped', appState.cameraFlipped.toString());
+    
+    // Apply flip to video
+    applyCameraFlip();
+    
+    // Update UI
+    updateFlipCameraUI();
+    
+    console.log('Camera flip toggled:', appState.cameraFlipped ? 'mirrored' : 'normal');
+}
+
+/**
+ * Apply camera flip to video element
+ */
+function applyCameraFlip() {
+    const video = document.getElementById('camera-video');
+    if (!video) {
+        return;
+    }
+    
+    if (appState.cameraFlipped) {
+        video.classList.add('flipped');
+    } else {
+        video.classList.remove('flipped');
+    }
+}
+
+/**
+ * Update flip camera button UI
+ */
+function updateFlipCameraUI() {
+    const flipButton = document.getElementById('toggle-flip-camera');
+    const statusElement = document.getElementById('status-flip-camera');
+    
+    if (flipButton && statusElement) {
+        if (appState.cameraFlipped) {
+            flipButton.classList.add('active');
+            statusElement.textContent = 'On';
+        } else {
+            flipButton.classList.remove('active');
+            statusElement.textContent = 'Off';
+        }
+    }
+}
+
+/**
  * Cleanup camera stream on page unload
  */
 window.addEventListener('beforeunload', () => {
@@ -699,6 +847,114 @@ window.addEventListener('beforeunload', () => {
         appState.cameraStream.getTracks().forEach(track => track.stop());
     }
 });
+
+/**
+ * Element Registry for Pinch-to-Click
+ * Maps element IDs/selectors to their click handlers
+ * This allows direct handler invocation, bypassing browser security restrictions
+ */
+export const elementClickRegistry = {
+    // Sidebar controls
+    'sidebar-toggle': () => {
+        console.log('Pinch click: Toggling sidebar');
+        toggleSidebar();
+    },
+    'sidebar-close': () => {
+        console.log('Pinch click: Closing sidebar');
+        closeSidebar();
+    },
+    'sidebar-overlay': () => {
+        console.log('Pinch click: Closing sidebar via overlay');
+        closeSidebar();
+    },
+    
+    // Feature toggles
+    'toggle-speech': () => {
+        console.log('Pinch click: Toggling speech captions');
+        toggleFeature('speech');
+    },
+    'toggle-sign': () => {
+        console.log('Pinch click: Toggling sign language');
+        toggleFeature('sign');
+    },
+    'toggle-scene': () => {
+        console.log('Pinch click: Toggling scene description');
+        toggleFeature('scene');
+    },
+    'toggle-face': () => {
+        console.log('Pinch click: Toggling face recognition');
+        toggleFeature('face');
+    },
+    
+    // Settings
+    'toggle-flip-camera': () => {
+        console.log('Pinch click: Toggling camera flip');
+        toggleCameraFlip();
+    },
+    'toggle-pinch-click': () => {
+        console.log('Pinch click: Toggling pinch-to-click');
+        togglePinchToClick();
+    },
+    'settings-btn': () => {
+        console.log('Pinch click: Opening settings');
+        alert('Settings panel - Coming soon!');
+    },
+    'help-btn': () => {
+        console.log('Pinch click: Opening help');
+        alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click');
+    }
+};
+
+/**
+ * Get click handler for an element
+ * Checks element ID, then class names, then tag name
+ * @param {HTMLElement} element - Element to get handler for
+ * @returns {Function|null} Handler function or null
+ */
+export function getClickHandler(element) {
+    if (!element) return null;
+    
+    // Check by ID first (most specific)
+    if (element.id && elementClickRegistry[element.id]) {
+        console.log('  ✓ Found handler by element ID:', element.id);
+        return elementClickRegistry[element.id];
+    }
+    
+    // Check by class name (if element has specific classes)
+    if (element.className) {
+        const classes = element.className.split(' ').filter(c => c.trim());
+        for (const className of classes) {
+            if (elementClickRegistry[className]) {
+                console.log('  ✓ Found handler by element class:', className);
+                return elementClickRegistry[className];
+            }
+        }
+    }
+    
+    // Check parent elements (for nested elements like buttons with spans)
+    let parent = element.parentElement;
+    let depth = 0;
+    while (parent && depth < 5) { // Check up to 5 levels up (increased from 3)
+        if (parent.id && elementClickRegistry[parent.id]) {
+            console.log(`  ✓ Found handler by parent ID (depth ${depth + 1}):`, parent.id);
+            return elementClickRegistry[parent.id];
+        }
+        // Also check parent classes
+        if (parent.className) {
+            const parentClasses = parent.className.split(' ').filter(c => c.trim());
+            for (const className of parentClasses) {
+                if (elementClickRegistry[className]) {
+                    console.log(`  ✓ Found handler by parent class (depth ${depth + 1}):`, className);
+                    return elementClickRegistry[className];
+                }
+            }
+        }
+        parent = parent.parentElement;
+        depth++;
+    }
+    
+    return null;
+}
 
 // Export for use in other modules (if needed)
 export { appState, toggleSidebar, closeSidebar };
