@@ -21,7 +21,8 @@ import {
     isModuleInitialized as isSignInitialized,
     setPinchToClickEnabled,
     isPinchToClickEnabled,
-    setClickRegistry
+    setClickRegistry,
+    loadButtonPositions
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -65,6 +66,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize sidebar
     initializeSidebar();
+    
+    // Load saved button positions
+    loadButtonPositions();
     
     // Initialize camera first (most important)
     initializeCamera();

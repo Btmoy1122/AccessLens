@@ -57,6 +57,17 @@ let lastPinchClickLocation = null; // Last location where we triggered a click
 const MIN_PINCH_MOVE_DISTANCE = 0.05; // Minimum normalized distance to trigger new click while pinched
 let pinchLocation = null; // Current pinch location {x, y}
 
+// Middle finger pinch drag state
+let middlePinchDragEnabled = false; // Whether middle finger drag is enabled
+let isMiddlePinchActive = false; // Current middle finger pinch state
+let lastMiddlePinchState = false; // Previous middle finger pinch state
+let middlePinchStateHistory = []; // History for debouncing
+let draggingButtonId = null; // ID of button being dragged
+let dragStartLocation = null; // Starting location of drag with offset {x, y, offsetX, offsetY}
+let middlePinchLocation = null; // Current middle finger pinch location {x, y}
+const MIDDLE_PINCH_THRESHOLD = 0.05; // Threshold for middle finger pinch detection
+const MIDDLE_PINCH_DEBOUNCE_FRAMES = 3; // Frames to debounce middle finger pinch
+
 // ASL model configuration
 const MODEL_CONFIG = {
     // Local model path (place model.json and weights in assets/ml-models/sign-language/)
@@ -406,6 +417,11 @@ export async function startDetection() {
     pinchStateHistory = [];
     currentPinchState = false;
     lastPinchState = false;
+    middlePinchStateHistory = [];
+    isMiddlePinchActive = false;
+    lastMiddlePinchState = false;
+    draggingButtonId = null;
+    dragStartLocation = null;
     
     // Initialize pinch status element
     pinchStatusElement = document.getElementById('pinch-text');
@@ -414,6 +430,9 @@ export async function startDetection() {
         // Ensure it starts hidden until hand is detected
         pinchContainer.classList.add('hidden');
     }
+    
+    // Enable middle finger pinch drag by default when sign language is enabled
+    middlePinchDragEnabled = true;
     
     // Initialize pinch overlay canvas for visual feedback
     initializePinchOverlay();
@@ -716,46 +735,66 @@ function getDistance(pointA, pointB) {
 
 /**
  * Detect pinch gesture from hand landmarks
+ * Detects both index finger pinch (for clicking) and middle finger pinch (for dragging)
  * @param {Array} landmarks - MediaPipe hand landmarks (21 points)
  */
 function detectPinch(landmarks) {
     // Ensure we have enough landmarks
-    if (!landmarks || landmarks.length < 9) {
+    if (!landmarks || landmarks.length < 13) {
         updatePinchStatus(false, false);
+        updatePinchTypeIndicator(null);
         if (pinchToClickEnabled) {
             handlePinchRelease();
+        }
+        if (middlePinchDragEnabled) {
+            handleMiddlePinchRelease();
         }
         return;
     }
 
-    // Get thumb tip (index 4) and index finger tip (index 8)
+    // Get thumb tip (index 4), index finger tip (index 8), and middle finger tip (index 12)
     const THUMB_TIP_INDEX = 4;
     const INDEX_FINGER_TIP_INDEX = 8;
+    const MIDDLE_FINGER_TIP_INDEX = 12;
     
     const thumbTip = landmarks[THUMB_TIP_INDEX];
     const indexTip = landmarks[INDEX_FINGER_TIP_INDEX];
+    const middleTip = landmarks[MIDDLE_FINGER_TIP_INDEX];
 
-    if (!thumbTip || !indexTip) {
+    if (!thumbTip || !indexTip || !middleTip) {
         updatePinchStatus(false, false);
+        updatePinchTypeIndicator(null);
         if (pinchToClickEnabled) {
             handlePinchRelease();
+        }
+        if (middlePinchDragEnabled) {
+            handleMiddlePinchRelease();
         }
         return;
     }
 
-    // Calculate distance between thumb and index finger tips
-    const pinchDistance = getDistance(thumbTip, indexTip);
+    // Calculate distances between thumb and both fingers
+    const distIndexThumb = getDistance(thumbTip, indexTip);
+    const distMiddleThumb = getDistance(thumbTip, middleTip);
 
-    // Use index finger tip as the click location (more accurate for clicking)
-    // The index finger is typically what users point with
+    // Determine which pinch is active (or neither)
+    const isIndexPinch = distIndexThumb < PINCH_THRESHOLD && distIndexThumb < distMiddleThumb;
+    const isMiddlePinch = distMiddleThumb < MIDDLE_PINCH_THRESHOLD && distMiddleThumb < distIndexThumb && !isIndexPinch;
+    
+    // Update pinch type indicator
+    if (isIndexPinch) {
+        updatePinchTypeIndicator('index');
+    } else if (isMiddlePinch) {
+        updatePinchTypeIndicator('middle');
+    } else {
+        updatePinchTypeIndicator(null);
+    }
+
+    // Handle index finger pinch (for clicking)
     const pinchX = indexTip.x;
     const pinchY = indexTip.y;
-    
-    // Store pinch location for click simulation
     pinchLocation = { x: pinchX, y: pinchY };
-
-    // Determine if pinched (distance below threshold)
-    const isPinched = pinchDistance < PINCH_THRESHOLD;
+    const isPinched = isIndexPinch;
 
     // Add to debounce history
     pinchStateHistory.push(isPinched);
@@ -843,6 +882,9 @@ function detectPinch(landmarks) {
                 }
             }
             
+            // Handle middle finger pinch (for dragging buttons) - process separately
+            processMiddleFingerPinch(isMiddlePinch, middleTip, thumbTip);
+            
             // Update visual feedback if enabled
             if (pinchToClickEnabled && isPinched) {
                 updatePinchVisualFeedback(pinchX, pinchY);
@@ -855,6 +897,9 @@ function detectPinch(landmarks) {
             if (pinchToClickEnabled && isPinched) {
                 updatePinchVisualFeedback(pinchX, pinchY);
             }
+            
+            // Still process middle finger pinch even if index finger state is debouncing
+            processMiddleFingerPinch(isMiddlePinch, middleTip, thumbTip);
         }
         // If frames don't agree, keep current state (prevents flickering)
     } else {
@@ -1065,6 +1110,352 @@ export function setPinchToClickEnabled(enabled) {
  */
 export function isPinchToClickEnabled() {
     return pinchToClickEnabled;
+}
+
+/**
+ * Update pinch type indicator (Index finger pinch / Middle finger pinch)
+ * @param {string|null} pinchType - 'index', 'middle', or null
+ */
+function updatePinchTypeIndicator(pinchType) {
+    const indicator = document.getElementById('pinch-type-indicator');
+    const textElement = document.getElementById('pinch-type-text');
+    
+    if (!indicator || !textElement) {
+        return;
+    }
+    
+    if (pinchType === 'index') {
+        indicator.classList.remove('hidden');
+        textElement.textContent = 'Index finger pinch';
+        textElement.classList.remove('middle-pinch');
+        textElement.classList.add('index-pinch');
+    } else if (pinchType === 'middle') {
+        indicator.classList.remove('hidden');
+        textElement.textContent = 'Middle finger pinch';
+        textElement.classList.remove('index-pinch');
+        textElement.classList.add('middle-pinch');
+    } else {
+        indicator.classList.add('hidden');
+        textElement.classList.remove('index-pinch', 'middle-pinch');
+    }
+}
+
+/**
+ * Process middle finger pinch for drag-and-drop functionality
+ * @param {boolean} isMiddlePinch - Whether middle finger pinch is detected
+ * @param {Object} middleTip - Middle finger tip landmark
+ * @param {Object} thumbTip - Thumb tip landmark
+ */
+function processMiddleFingerPinch(isMiddlePinch, middleTip, thumbTip) {
+    if (!middlePinchDragEnabled) {
+        return;
+    }
+    
+    // Calculate midpoint between middle finger and thumb for drag location
+    const middlePinchX = (middleTip.x + thumbTip.x) / 2;
+    const middlePinchY = (middleTip.y + thumbTip.y) / 2;
+    middlePinchLocation = { x: middlePinchX, y: middlePinchY };
+    
+    // Add to debounce history
+    middlePinchStateHistory.push(isMiddlePinch);
+    
+    // Maintain debounce history size
+    if (middlePinchStateHistory.length > MIDDLE_PINCH_DEBOUNCE_FRAMES) {
+        middlePinchStateHistory.shift();
+    }
+    
+    // Check if state is consistent across debounce frames
+    if (middlePinchStateHistory.length >= MIDDLE_PINCH_DEBOUNCE_FRAMES) {
+        const allAgree = middlePinchStateHistory.every(state => state === isMiddlePinch);
+        
+        if (allAgree) {
+            const stateChanged = isMiddlePinch !== isMiddlePinchActive;
+            
+            if (stateChanged) {
+                isMiddlePinchActive = isMiddlePinch;
+                
+                if (isMiddlePinch && !lastMiddlePinchState) {
+                    // Middle pinch started - check if over a button to start drag
+                    handleMiddlePinchStart(middlePinchX, middlePinchY);
+                } else if (!isMiddlePinch && lastMiddlePinchState) {
+                    // Middle pinch released - end drag
+                    handleMiddlePinchRelease();
+                }
+                
+                lastMiddlePinchState = isMiddlePinch;
+            } else if (isMiddlePinchActive && isMiddlePinch) {
+                // Continue dragging if already dragging
+                handleMiddlePinchDrag(middlePinchX, middlePinchY);
+            }
+        }
+    }
+}
+
+/**
+ * Handle middle finger pinch start - begin drag if over a button
+ * @param {number} normalizedX - Normalized X coordinate (0-1)
+ * @param {number} normalizedY - Normalized Y coordinate (0-1)
+ */
+function handleMiddlePinchStart(normalizedX, normalizedY) {
+    const screenCoords = mapNormalizedToScreen(normalizedX, normalizedY);
+    
+    // Find element at pinch location
+    const canvas = document.getElementById('pinch-overlay');
+    const canvasDisplay = canvas ? canvas.style.display : '';
+    if (canvas) {
+        canvas.style.display = 'none';
+    }
+    
+    const elementAtPoint = document.elementFromPoint(screenCoords.x, screenCoords.y);
+    
+    if (canvas) {
+        canvas.style.display = canvasDisplay || '';
+    }
+    
+    if (!elementAtPoint) {
+        return;
+    }
+    
+    // Check if it's a nav-item button or inside one
+    let buttonElement = elementAtPoint;
+    let depth = 0;
+    
+    // Traverse up to find the nav-item button
+    while (buttonElement && depth < 5) {
+        if (buttonElement.classList && buttonElement.classList.contains('nav-item')) {
+            draggingButtonId = buttonElement.id;
+            
+            // Store initial location for reference (button will align with pinch location)
+            dragStartLocation = {
+                x: screenCoords.x,
+                y: screenCoords.y
+            };
+            
+            // Add dragging class for visual feedback
+            buttonElement.classList.add('dragging');
+            
+            console.log('🟡 Middle finger pinch - starting drag for button:', draggingButtonId);
+            return;
+        }
+        buttonElement = buttonElement.parentElement;
+        depth++;
+    }
+}
+
+/**
+ * Handle middle finger pinch drag - move button to new location
+ * @param {number} normalizedX - Normalized X coordinate (0-1)
+ * @param {number} normalizedY - Normalized Y coordinate (0-1)
+ */
+function handleMiddlePinchDrag(normalizedX, normalizedY) {
+    if (!draggingButtonId) {
+        return;
+    }
+    
+    const button = document.getElementById(draggingButtonId);
+    if (!button) {
+        draggingButtonId = null;
+        return;
+    }
+    
+    const screenCoords = mapNormalizedToScreen(normalizedX, normalizedY);
+    
+    // Get sidebar and sidebar-nav elements for proper coordinate calculation
+    const sidebar = document.getElementById('sidebar');
+    const sidebarNav = document.querySelector('.sidebar-nav');
+    
+    if (!sidebar || !sidebarNav) {
+        return;
+    }
+    
+    const sidebarRect = sidebar.getBoundingClientRect();
+    const sidebarNavRect = sidebarNav.getBoundingClientRect();
+    
+    // Get button dimensions (use current button rect for accurate size)
+    const buttonRect = button.getBoundingClientRect();
+    const buttonWidth = buttonRect.width || 310;
+    const buttonHeight = buttonRect.height || 56;
+    
+    // Debug: Log coordinates to understand the offset
+    if (Math.random() < 0.01) { // Log ~1% of frames to avoid spam
+        console.log('Drag coordinates:', {
+            normalized: { x: normalizedX.toFixed(3), y: normalizedY.toFixed(3) },
+            screen: { x: Math.round(screenCoords.x), y: Math.round(screenCoords.y) },
+            sidebarNav: { 
+                top: Math.round(sidebarNavRect.top), 
+                left: Math.round(sidebarNavRect.left),
+                height: Math.round(sidebarNavRect.height)
+            },
+            button: {
+                width: Math.round(buttonWidth),
+                height: Math.round(buttonHeight)
+            }
+        });
+    }
+    
+    // Calculate button center to align with pinch location
+    // Align button center Y with pinch Y for same vertical level
+    let buttonCenterX = screenCoords.x;
+    let buttonCenterY = screenCoords.y; // Align vertically with pinch
+    
+    // Calculate top-left corner of button (viewport coordinates)
+    let targetX = buttonCenterX - buttonWidth / 2;
+    let targetY = buttonCenterY - buttonHeight / 2;
+    
+    // Constrain horizontally within sidebar bounds
+    targetX = Math.max(sidebarRect.left, Math.min(targetX, sidebarRect.right - buttonWidth));
+    
+    // Constrain vertically within sidebar-nav bounds (not sidebar, to exclude header)
+    targetY = Math.max(sidebarNavRect.top, Math.min(targetY, sidebarNavRect.bottom - buttonHeight));
+    
+    // Convert viewport coordinates to relative coordinates within sidebar-nav
+    // sidebar-nav has position: relative, so buttons positioned absolutely will be relative to it
+    // 
+    // CRITICAL: getBoundingClientRect() returns the element's position in the viewport,
+    // which is what we want. We just need to subtract the sidebar-nav's viewport position
+    // to get coordinates relative to it.
+    const relativeX = targetX - sidebarNavRect.left;
+    let relativeY = targetY - sidebarNavRect.top;
+    
+    // Apply absolute positioning (relative to sidebar-nav)
+    button.style.position = 'absolute';
+    button.style.left = `${relativeX}px`;
+    button.style.top = `${relativeY}px`;
+    button.style.width = `${buttonWidth}px`;
+    button.style.margin = '0';
+    button.style.zIndex = '10'; // Ensure dragged button is on top
+    
+    // IMPORTANT FIX: Verify and correct button position to match pinch location
+    // After setting the position, check if the button center actually aligns with the pinch
+    // If not, adjust to compensate for any coordinate mapping errors
+    
+    // Force a reflow to ensure the position is applied before measuring
+    void button.offsetHeight;
+    
+    // Get the actual rendered button position
+    const actualRect = button.getBoundingClientRect();
+    const actualButtonCenterY = actualRect.top + actualRect.height / 2;
+    const expectedButtonCenterY = screenCoords.y; // Where we want the button center to be
+    
+    // Calculate the offset between expected and actual position
+    const yOffsetError = actualButtonCenterY - expectedButtonCenterY;
+    
+    // If there's a significant offset (more than 2px), correct it
+    // This ensures the button center is exactly at the pinch location
+    if (Math.abs(yOffsetError) > 2) {
+        // Adjust the relative Y position to compensate for the offset
+        const correctedRelativeY = relativeY - yOffsetError;
+        button.style.top = `${correctedRelativeY}px`;
+        
+        // Verify the correction worked
+        void button.offsetHeight; // Force reflow again
+        const correctedRect = button.getBoundingClientRect();
+        const correctedCenterY = correctedRect.top + correctedRect.height / 2;
+        const finalOffset = correctedCenterY - expectedButtonCenterY;
+        
+        if (Math.random() < 0.1 && Math.abs(yOffsetError) > 10) { // Log large offsets
+            console.log('Button position correction:', {
+                buttonId: draggingButtonId,
+                expectedCenterY: Math.round(expectedButtonCenterY),
+                initialActualCenterY: Math.round(actualButtonCenterY),
+                yOffsetError: Math.round(yOffsetError),
+                correctedRelativeY: Math.round(correctedRelativeY),
+                finalCenterY: Math.round(correctedCenterY),
+                finalOffset: Math.round(finalOffset)
+            });
+        }
+    }
+    
+    // Debug: Verify final position (only when dragging bottom buttons for debugging)
+    if (Math.random() < 0.02 && relativeY > 300) { // Log more for bottom buttons
+        const finalRect = button.getBoundingClientRect();
+        console.log('Final button position (bottom button):', {
+            normalized: { x: normalizedX.toFixed(3), y: normalizedY.toFixed(3) },
+            screenCoords: { x: Math.round(screenCoords.x), y: Math.round(screenCoords.y) },
+            target: { x: Math.round(targetX), y: Math.round(targetY) },
+            sidebarScroll: sidebarScrollTop,
+            sidebarNavRect: { top: Math.round(sidebarNavRect.top), height: Math.round(sidebarNavRect.height) },
+            relative: { x: Math.round(relativeX), y: Math.round(relativeY) },
+            finalViewport: { x: Math.round(finalRect.left), y: Math.round(finalRect.top) },
+            buttonCenter: { 
+                x: Math.round(finalRect.left + finalRect.width / 2), 
+                y: Math.round(finalRect.top + finalRect.height / 2)
+            },
+            pinchLocation: { x: Math.round(screenCoords.x), y: Math.round(screenCoords.y) },
+            offset: {
+                x: Math.round((finalRect.left + finalRect.width / 2) - screenCoords.x),
+                y: Math.round((finalRect.top + finalRect.height / 2) - screenCoords.y)
+            }
+        });
+    }
+}
+
+/**
+ * Handle middle finger pinch release - end drag and save position
+ */
+function handleMiddlePinchRelease() {
+    if (!draggingButtonId) {
+        return;
+    }
+    
+    const button = document.getElementById(draggingButtonId);
+    if (button) {
+        // Remove dragging class
+        button.classList.remove('dragging');
+        
+        // Save position to localStorage
+        saveButtonPosition(draggingButtonId, {
+            left: button.style.left,
+            top: button.style.top,
+            position: 'absolute',
+            width: button.style.width
+        });
+        
+        console.log('🟢 Middle finger pinch released - drag ended for button:', draggingButtonId);
+    }
+    
+    draggingButtonId = null;
+    dragStartLocation = null;
+}
+
+/**
+ * Save button position to localStorage
+ * @param {string} buttonId - ID of the button
+ * @param {Object} position - Position data {left, top, position, width}
+ */
+function saveButtonPosition(buttonId, position) {
+    try {
+        const savedPositions = JSON.parse(localStorage.getItem('sidebarButtonPositions') || '{}');
+        savedPositions[buttonId] = position;
+        localStorage.setItem('sidebarButtonPositions', JSON.stringify(savedPositions));
+    } catch (error) {
+        console.error('Error saving button position:', error);
+    }
+}
+
+/**
+ * Load and apply saved button positions
+ */
+export function loadButtonPositions() {
+    try {
+        const savedPositions = JSON.parse(localStorage.getItem('sidebarButtonPositions') || '{}');
+        
+        Object.keys(savedPositions).forEach(buttonId => {
+            const button = document.getElementById(buttonId);
+            if (button && savedPositions[buttonId]) {
+                const pos = savedPositions[buttonId];
+                button.style.position = pos.position || 'absolute';
+                button.style.left = pos.left || '';
+                button.style.top = pos.top || '';
+                if (pos.width) {
+                    button.style.width = pos.width;
+                }
+                button.style.margin = '0';
+            }
+        });
+    } catch (error) {
+        console.error('Error loading button positions:', error);
+    }
 }
 
 /**
