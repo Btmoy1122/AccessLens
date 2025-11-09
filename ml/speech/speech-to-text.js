@@ -45,6 +45,15 @@ export function initSpeechToText() {
         recognition.lang = 'en-US'; // Default language
         recognition.maxAlternatives = 1;
         
+        // On mobile (especially iOS), speech recognition may have limitations
+        // Note: Some mobile browsers require user interaction to start recognition
+        const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+        if (isMobile) {
+            console.log('Mobile device detected - speech recognition configured with mobile considerations');
+            // On mobile, we still try continuous mode, but it may not work on all devices
+            // iOS Safari typically requires user interaction to start
+        }
+        
         // Event handlers
         recognition.onresult = handleSpeechResult;
         recognition.onerror = handleSpeechError;

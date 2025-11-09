@@ -3172,13 +3172,25 @@ export function setHandMenuToDefaultPosition() {
         return;
     }
     
+    // Detect if we're on mobile
+    const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+    
     // Create default quadrilateral in center of screen (shifted up a bit)
     // Normalized coordinates (0-1): center is at 0.5, 0.45 (shifted up)
-    // Default size: 60% of screen width and 70% of screen height to show all buttons
+    // Adjust size based on device type
     const centerX = 0.5;
     const centerY = 0.45; // Shifted up from 0.5 to 0.45
-    const width = 0.6;  // 60% of screen width
-    const height = 0.7; // 70% of screen height to accommodate all buttons
+    
+    let width, height;
+    if (isMobile) {
+        // Mobile: Use 85% width and 80% height to ensure menu fits and buttons are visible
+        width = 0.85;  // 85% of screen width
+        height = 0.80; // 80% of screen height
+    } else {
+        // Desktop: Use 60% width and 70% height
+        width = 0.6;  // 60% of screen width
+        height = 0.7; // 70% of screen height to accommodate all buttons
+    }
     
     const halfWidth = width / 2;
     const halfHeight = height / 2;
@@ -3334,6 +3346,10 @@ function mapButtonsToQuadrilateral(quadrilateral) {
     const videoWidth = videoElement.videoWidth || videoRect.width;
     const videoHeight = videoElement.videoHeight || videoRect.height;
     
+    // Get viewport dimensions
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
     // Convert normalized coordinates to screen coordinates
     // Account for object-fit: cover if needed
     const screenCoords = {
@@ -3344,10 +3360,35 @@ function mapButtonsToQuadrilateral(quadrilateral) {
     };
     
     // Calculate bounding box of quadrilateral
-    const minX = Math.min(screenCoords.leftThumb.x, screenCoords.rightThumb.x, screenCoords.rightIndex.x, screenCoords.leftIndex.x);
-    const maxX = Math.max(screenCoords.leftThumb.x, screenCoords.rightThumb.x, screenCoords.rightIndex.x, screenCoords.leftIndex.x);
-    const minY = Math.min(screenCoords.leftThumb.y, screenCoords.rightThumb.y, screenCoords.rightIndex.y, screenCoords.leftIndex.y);
-    const maxY = Math.max(screenCoords.leftThumb.y, screenCoords.rightThumb.y, screenCoords.rightIndex.y, screenCoords.leftIndex.y);
+    let minX = Math.min(screenCoords.leftThumb.x, screenCoords.rightThumb.x, screenCoords.rightIndex.x, screenCoords.leftIndex.x);
+    let maxX = Math.max(screenCoords.leftThumb.x, screenCoords.rightThumb.x, screenCoords.rightIndex.x, screenCoords.leftIndex.x);
+    let minY = Math.min(screenCoords.leftThumb.y, screenCoords.rightThumb.y, screenCoords.rightIndex.y, screenCoords.leftIndex.y);
+    let maxY = Math.max(screenCoords.leftThumb.y, screenCoords.rightThumb.y, screenCoords.rightIndex.y, screenCoords.leftIndex.y);
+    
+    // On mobile, ensure menu stays within viewport bounds
+    if (isMobile) {
+        const padding = 10; // Padding from viewport edges
+        const minMenuWidth = 200; // Minimum menu width
+        const minMenuHeight = 300; // Minimum menu height
+        
+        // Clamp to viewport with padding
+        minX = Math.max(padding, minX);
+        maxX = Math.min(viewportWidth - padding, maxX);
+        minY = Math.max(padding, minY);
+        maxY = Math.min(viewportHeight - padding, maxY);
+        
+        // Ensure minimum size
+        if (maxX - minX < minMenuWidth) {
+            const centerX = (minX + maxX) / 2;
+            minX = Math.max(padding, centerX - minMenuWidth / 2);
+            maxX = Math.min(viewportWidth - padding, centerX + minMenuWidth / 2);
+        }
+        if (maxY - minY < minMenuHeight) {
+            const centerY = (minY + maxY) / 2;
+            minY = Math.max(padding, centerY - minMenuHeight / 2);
+            maxY = Math.min(viewportHeight - padding, centerY + minMenuHeight / 2);
+        }
+    }
     
     const quadWidth = maxX - minX;
     const quadHeight = maxY - minY;
