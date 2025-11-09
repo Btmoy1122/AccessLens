@@ -1399,10 +1399,56 @@ button:focus-visible {
         max-width: 150px;
     }
     
+    /* Hand Menu - Mobile Optimizations */
+    .hand-menu-overlay {
+        /* Ensure overlay fits within viewport */
+        max-width: 100vw;
+        max-height: 100vh;
+        overflow: hidden;
+    }
+    
+    .hand-menu-buttons {
+        /* Larger padding and gap for mobile */
+        padding: 16px;
+        gap: 12px;
+        /* Single column layout on mobile for better visibility and to prevent cutoff */
+        grid-template-columns: 1fr !important;
+        /* Adjust rows for single column - lock indicator, unlock button, then all menu buttons */
+        grid-template-rows: auto auto repeat(8, minmax(56px, 1fr));
+        /* Ensure buttons container doesn't exceed viewport */
+        max-width: 100%;
+        max-height: 100%;
+        overflow-y: auto;
+    }
+    
     .hand-menu-button {
-        font-size: 12px;
-        padding: 8px 12px;
-        min-height: 40px;
+        font-size: 16px;
+        padding: 16px 20px;
+        min-height: 56px; /* Larger touch targets on mobile */
+        font-weight: 600;
+        /* Ensure buttons don't get cut off */
+        box-sizing: border-box;
+        width: 100%;
+    }
+    
+    .hand-menu-button-icon {
+        font-size: 24px;
+    }
+    
+    .hand-menu-button-label {
+        font-size: 15px;
+    }
+    
+    .hand-menu-lock-indicator {
+        font-size: 16px;
+        padding: 12px 20px;
+        min-height: 48px;
+    }
+    
+    .hand-menu-unlock-button {
+        font-size: 20px;
+        padding: 20px 28px;
+        min-height: 72px; /* Larger touch target */
     }
     
     .hand-menu-toggle {
