@@ -60,6 +60,19 @@ html {
     /* Ensure canvas is above video but below UI elements */
 }
 
+/* Snap Grid Overlay - Visual grid for button slots */
+.snap-grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5; /* Above nav-section but below dragging buttons */
+    opacity: 0.6;
+    display: none; /* Hidden by default, shown when dragging */
+}
+
 /* AR Container - Overlay on camera */
 .ar-container {
     position: fixed;
@@ -108,14 +121,14 @@ html {
     position: fixed;
     top: 20px;
     right: 20px;
-    width: 50px;
-    height: 50px;
+    width: 150px; /* 300% of 50px */
+    height: 150px; /* 300% of 50px */
     background: rgba(255, 255, 255, 0.15);
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 12px;
     color: #fff;
-    font-size: 24px;
+    font-size: 60px; /* Increased proportionally for icon (300% of 20px) */
     cursor: pointer;
     z-index: 1000;
     display: flex;
@@ -142,8 +155,8 @@ html {
 .sidebar {
     position: fixed;
     top: 0;
-    right: -350px; /* Hidden by default */
-    width: 350px;
+    right: -525px; /* Hidden by default - 50% wider (350px * 1.5 = 525px) */
+    width: 525px; /* 50% wider than original 350px */
     height: 100vh;
     background: rgba(20, 20, 20, 0.4); /* Light, see-through */
     backdrop-filter: blur(2px); /* Subtle blur for readability */
@@ -288,6 +301,42 @@ html {
     color: #fff;
 }
 
+/* Camera Selector */
+.camera-selector-container {
+    padding: 16px;
+    cursor: default; /* Don't show grab cursor */
+}
+
+.camera-selector-container .nav-label {
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
+    margin-bottom: 8px;
+    display: block;
+}
+
+.camera-select {
+    width: 100%;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    color: #222;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.camera-select:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: rgba(74, 144, 226, 0.5);
+}
+
+.camera-select:focus {
+    border-color: rgba(74, 144, 226, 0.8);
+    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
 /* Sidebar Overlay (Mobile) - Disabled dimming */
 .sidebar-overlay {
     position: fixed;
@@ -363,9 +412,9 @@ html {
     .sidebar-toggle {
         top: 15px;
         right: 15px;
-        width: 45px;
-        height: 45px;
-        font-size: 20px;
+        width: 135px; /* 300% of 45px */
+        height: 135px; /* 300% of 45px */
+        font-size: 54px; /* Increased proportionally for icon */
     }
 
     .camera-status {

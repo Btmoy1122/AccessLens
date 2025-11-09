@@ -64,9 +64,17 @@ let lastMiddlePinchState = false; // Previous middle finger pinch state
 let middlePinchStateHistory = []; // History for debouncing
 let draggingButtonId = null; // ID of button being dragged
 let dragStartLocation = null; // Starting location of drag with offset {x, y, offsetX, offsetY}
+let originalButtonX = null; // Original X position of button when drag starts (locked)
 let middlePinchLocation = null; // Current middle finger pinch location {x, y}
 const MIDDLE_PINCH_THRESHOLD = 0.05; // Threshold for middle finger pinch detection
 const MIDDLE_PINCH_DEBOUNCE_FRAMES = 3; // Frames to debounce middle finger pinch
+
+// Snap-to-grid configuration
+const SNAP_GRID_SIZE = 70; // Grid cell size in pixels (height for vertical slots)
+const SNAP_THRESHOLD = 25; // Distance in pixels to trigger snap (half of grid size)
+let snapSlots = []; // Array of slot positions {x, y, width, height}
+let showSnapGrid = false; // Whether to show visual grid
+let occupiedSlots = new Map(); // Map of slot index to button ID to prevent overlap
 
 // ASL model configuration
 const MODEL_CONFIG = {
@@ -433,6 +441,9 @@ export async function startDetection() {
     
     // Enable middle finger pinch drag by default when sign language is enabled
     middlePinchDragEnabled = true;
+    
+    // Initialize snap grid slots
+    initializeSnapGrid();
     
     // Initialize pinch overlay canvas for visual feedback
     initializePinchOverlay();
@@ -1222,8 +1233,45 @@ function handleMiddlePinchStart(normalizedX, normalizedY) {
     
     // Traverse up to find the nav-item button
     while (buttonElement && depth < 5) {
+        // Skip camera selector container (not draggable)
+        if (buttonElement.classList && buttonElement.classList.contains('camera-selector-container')) {
+            return; // Don't allow dragging the camera selector
+        }
+        
         if (buttonElement.classList && buttonElement.classList.contains('nav-item')) {
+            // Make sure it's not the camera selector container
+            if (buttonElement.id === 'camera-select' || buttonElement.closest('.camera-selector-container')) {
+                return; // Don't allow dragging the camera selector
+            }
+            
             draggingButtonId = buttonElement.id;
+            
+            // Store original X position (locked - button will only move vertically)
+            const buttonRect = buttonElement.getBoundingClientRect();
+            const sidebarNav = document.querySelector('.sidebar-nav');
+            if (sidebarNav) {
+                const sidebarNavRect = sidebarNav.getBoundingClientRect();
+                // Store the button's current X position relative to sidebar-nav
+                let currentX = buttonRect.left - sidebarNavRect.left;
+                
+                // If button hasn't been positioned yet (still in normal flow), use nav-section padding
+                if (currentX < 5 || !buttonElement.style.position || buttonElement.style.position !== 'absolute') {
+                    // Button is in normal flow, use nav-section padding (20px from CSS)
+                    originalButtonX = 20;
+                } else {
+                    // Button is already absolutely positioned, use its current X
+                    originalButtonX = currentX;
+                }
+            } else {
+                // Fallback: use nav-section padding (20px from CSS)
+                originalButtonX = 20;
+            }
+            
+            // Ensure X is within valid bounds (nav-section padding to sidebar width - button width - padding)
+            const sidebarPadding = 20;
+            if (originalButtonX < sidebarPadding) {
+                originalButtonX = sidebarPadding;
+            }
             
             // Store initial location for reference (button will align with pinch location)
             dragStartLocation = {
@@ -1234,7 +1282,20 @@ function handleMiddlePinchStart(normalizedX, normalizedY) {
             // Add dragging class for visual feedback
             buttonElement.classList.add('dragging');
             
-            console.log('🟡 Middle finger pinch - starting drag for button:', draggingButtonId);
+            // Update occupied slots before starting drag
+            updateOccupiedSlots();
+            
+            // Remove this button from occupied slots (will be re-added when snapped)
+            const currentTop = parseInt(buttonElement.style.top) || 0;
+            const currentSlotIndex = getSlotIndex(currentTop);
+            if (occupiedSlots.get(currentSlotIndex) === draggingButtonId) {
+                occupiedSlots.delete(currentSlotIndex);
+            }
+            
+            // Show snap grid when dragging starts
+            updateSnapGridVisibility(true);
+            
+            console.log('🟡 Middle finger pinch - starting drag for button:', draggingButtonId, 'locked X:', originalButtonX);
             return;
         }
         buttonElement = buttonElement.parentElement;
@@ -1293,77 +1354,72 @@ function handleMiddlePinchDrag(normalizedX, normalizedY) {
         });
     }
     
-    // Calculate button center to align with pinch location
-    // Align button center Y with pinch Y for same vertical level
-    let buttonCenterX = screenCoords.x;
-    let buttonCenterY = screenCoords.y; // Align vertically with pinch
+    // LOCK X-AXIS: Only move button vertically, keep X position locked to original
+    // Use the original X position stored when drag started, or fallback to nav-section padding
+    let relativeX = originalButtonX;
+    if (relativeX === null) {
+        // Fallback: use nav-section padding (20px) if originalButtonX wasn't set
+        relativeX = 20;
+    }
     
-    // Calculate top-left corner of button (viewport coordinates)
-    let targetX = buttonCenterX - buttonWidth / 2;
+    // Calculate button center to align with pinch location (Y-axis only)
+    // Align button center Y with pinch Y for same vertical level
+    const buttonCenterY = screenCoords.y; // Align vertically with pinch
+    
+    // Calculate top-left corner of button (viewport coordinates) - Y only
     let targetY = buttonCenterY - buttonHeight / 2;
     
-    // Constrain horizontally within sidebar bounds
-    targetX = Math.max(sidebarRect.left, Math.min(targetX, sidebarRect.right - buttonWidth));
+    // Constrain horizontally - ensure button stays within sidebar bounds
+    const sidebarPadding = 20; // Match nav-section padding
+    
+    // Ensure button stays within sidebar bounds to prevent text cutoff
+    // Constrain width to prevent overflow
+    const maxButtonWidth = sidebarNavRect.width - (sidebarPadding * 2);
+    const finalButtonWidth = Math.min(buttonWidth, maxButtonWidth);
+    
+    // Calculate max X to prevent button from going off-screen (using finalButtonWidth)
+    const maxX = sidebarNavRect.width - finalButtonWidth - sidebarPadding;
+    const clampedX = Math.max(sidebarPadding, Math.min(relativeX, maxX));
     
     // Constrain vertically within sidebar-nav bounds (not sidebar, to exclude header)
     targetY = Math.max(sidebarNavRect.top, Math.min(targetY, sidebarNavRect.bottom - buttonHeight));
     
-    // Convert viewport coordinates to relative coordinates within sidebar-nav
-    // sidebar-nav has position: relative, so buttons positioned absolutely will be relative to it
-    // 
-    // CRITICAL: getBoundingClientRect() returns the element's position in the viewport,
-    // which is what we want. We just need to subtract the sidebar-nav's viewport position
-    // to get coordinates relative to it.
-    const relativeX = targetX - sidebarNavRect.left;
+    // Convert to relative coordinates within sidebar-nav
     let relativeY = targetY - sidebarNavRect.top;
     
     // Apply absolute positioning (relative to sidebar-nav)
+    // X is locked, only Y changes
     button.style.position = 'absolute';
-    button.style.left = `${relativeX}px`;
+    button.style.left = `${clampedX}px`;
     button.style.top = `${relativeY}px`;
-    button.style.width = `${buttonWidth}px`;
+    button.style.width = `${finalButtonWidth}px`;
     button.style.margin = '0';
     button.style.zIndex = '10'; // Ensure dragged button is on top
     
-    // IMPORTANT FIX: Verify and correct button position to match pinch location
-    // After setting the position, check if the button center actually aligns with the pinch
-    // If not, adjust to compensate for any coordinate mapping errors
+    // Use clampedX for grid snapping (ensures button stays within bounds)
+    const relativeXForSnap = clampedX;
     
-    // Force a reflow to ensure the position is applied before measuring
-    void button.offsetHeight;
+    // ALWAYS snap to grid during drag for smooth, stable movement (no shaking)
+    // This prevents shaking by always moving button to a stable grid position
+    // Update occupied slots first (excluding current button)
+    updateOccupiedSlots();
     
-    // Get the actual rendered button position
-    const actualRect = button.getBoundingClientRect();
-    const actualButtonCenterY = actualRect.top + actualRect.height / 2;
-    const expectedButtonCenterY = screenCoords.y; // Where we want the button center to be
+    // Snap to nearest grid slot (always snaps, no threshold)
+    // Use finalButtonWidth and clampedX to ensure proper width calculation and bounds
+    const snappedPosition = snapToGrid(relativeXForSnap, relativeY, finalButtonWidth, buttonHeight, sidebarNavRect, draggingButtonId);
     
-    // Calculate the offset between expected and actual position
-    const yOffsetError = actualButtonCenterY - expectedButtonCenterY;
-    
-    // If there's a significant offset (more than 2px), correct it
-    // This ensures the button center is exactly at the pinch location
-    if (Math.abs(yOffsetError) > 2) {
-        // Adjust the relative Y position to compensate for the offset
-        const correctedRelativeY = relativeY - yOffsetError;
-        button.style.top = `${correctedRelativeY}px`;
+    if (snappedPosition) {
+        // Smooth transition between grid slots (prevents shaking)
+        button.style.transition = 'top 0.15s ease-out';
+        button.style.left = `${relativeXForSnap}px`; // Always use clamped X (locked within bounds)
+        button.style.top = `${snappedPosition.y}px`;
         
-        // Verify the correction worked
-        void button.offsetHeight; // Force reflow again
-        const correctedRect = button.getBoundingClientRect();
-        const correctedCenterY = correctedRect.top + correctedRect.height / 2;
-        const finalOffset = correctedCenterY - expectedButtonCenterY;
-        
-        if (Math.random() < 0.1 && Math.abs(yOffsetError) > 10) { // Log large offsets
-            console.log('Button position correction:', {
-                buttonId: draggingButtonId,
-                expectedCenterY: Math.round(expectedButtonCenterY),
-                initialActualCenterY: Math.round(actualButtonCenterY),
-                yOffsetError: Math.round(yOffsetError),
-                correctedRelativeY: Math.round(correctedRelativeY),
-                finalCenterY: Math.round(correctedCenterY),
-                finalOffset: Math.round(finalOffset)
-            });
-        }
+        // Update occupied slots with current button position
+        occupiedSlots.set(snappedPosition.slotIndex, draggingButtonId);
+    } else {
+        // Fallback: ensure X stays locked (shouldn't happen if snap always works)
+        button.style.left = `${relativeXForSnap}px`;
+        button.style.transition = 'top 0.15s ease-out';
     }
     
     // Debug: Verify final position (only when dragging bottom buttons for debugging)
@@ -1400,8 +1456,45 @@ function handleMiddlePinchRelease() {
     
     const button = document.getElementById(draggingButtonId);
     if (button) {
+        // Get final position and snap to grid
+        const sidebarNav = document.querySelector('.sidebar-nav');
+        if (sidebarNav) {
+            const sidebarNavRect = sidebarNav.getBoundingClientRect();
+            const buttonRect = button.getBoundingClientRect();
+            const relativeX = buttonRect.left - sidebarNavRect.left;
+            const relativeY = buttonRect.top - sidebarNavRect.top;
+            const buttonWidth = buttonRect.width || 310;
+            const buttonHeight = buttonRect.height || 56;
+            
+            // Update occupied slots before final snap
+            updateOccupiedSlots();
+            
+            // Snap to nearest grid slot on release
+            // X position remains locked, only Y snaps
+            const lockedX = originalButtonX !== null ? originalButtonX : 20;
+            const snappedPosition = snapToGrid(lockedX, relativeY, buttonWidth, buttonHeight, sidebarNavRect, draggingButtonId);
+            
+            if (snappedPosition) {
+                button.style.transition = 'top 0.2s ease-out';
+                button.style.left = `${lockedX}px`; // Always use locked X
+                button.style.top = `${snappedPosition.y}px`;
+                
+                // Mark slot as occupied
+                occupiedSlots.set(snappedPosition.slotIndex, draggingButtonId);
+            } else {
+                // Even if not snapping, ensure X is locked
+                button.style.left = `${lockedX}px`;
+            }
+            
+            // Update occupied slots after final position
+            updateOccupiedSlots();
+        }
+        
         // Remove dragging class
         button.classList.remove('dragging');
+        
+        // Hide snap grid when dragging ends
+        updateSnapGridVisibility(false);
         
         // Save position to localStorage
         saveButtonPosition(draggingButtonId, {
@@ -1414,8 +1507,272 @@ function handleMiddlePinchRelease() {
         console.log('🟢 Middle finger pinch released - drag ended for button:', draggingButtonId);
     }
     
+    // Update occupied slots after drag ends
+    updateOccupiedSlots();
+    
     draggingButtonId = null;
     dragStartLocation = null;
+    originalButtonX = null; // Clear locked X position
+}
+
+/**
+ * Get the nearest grid slot index for a Y position
+ * @param {number} y - Y position
+ * @returns {number} Slot index (0-based)
+ */
+function getSlotIndex(y) {
+    return Math.round(y / SNAP_GRID_SIZE);
+}
+
+/**
+ * Get grid slot Y position from slot index
+ * @param {number} slotIndex - Slot index
+ * @returns {number} Y position of slot top
+ */
+function getSlotY(slotIndex) {
+    return slotIndex * SNAP_GRID_SIZE;
+}
+
+/**
+ * Snap button position to nearest grid slot (always snaps, no threshold)
+ * @param {number} x - Current X position (relative to sidebar-nav)
+ * @param {number} y - Current Y position (relative to sidebar-nav)
+ * @param {number} buttonWidth - Button width
+ * @param {number} buttonHeight - Button height
+ * @param {DOMRect} sidebarNavRect - Sidebar nav bounding rect
+ * @param {string} buttonId - ID of the button being dragged (to exclude from overlap check)
+ * @returns {{x: number, y: number, slotIndex: number}|null} Snapped position or null if invalid
+ */
+function snapToGrid(x, y, buttonWidth, buttonHeight, sidebarNavRect, buttonId = null) {
+    // Always snap to nearest grid slot (no threshold)
+    const slotIndex = getSlotIndex(y);
+    const slotY = getSlotY(slotIndex);
+    
+    // Constrain within sidebar-nav bounds
+    const minY = 0;
+    const maxY = Math.max(0, sidebarNavRect.height - buttonHeight);
+    const snappedY = Math.max(minY, Math.min(slotY, maxY));
+    
+    // Check if this slot is occupied by another button
+    if (buttonId && isSlotOccupied(slotIndex, buttonId)) {
+        // Find nearest unoccupied slot
+        const nearestSlot = findNearestUnoccupiedSlot(slotIndex, buttonId, sidebarNavRect, buttonHeight);
+        if (nearestSlot !== null) {
+            return {
+                x: x,
+                y: nearestSlot.y,
+                slotIndex: nearestSlot.index
+            };
+        }
+    }
+    
+    // X position is locked, so return the same X
+    return {
+        x: x,
+        y: snappedY,
+        slotIndex: slotIndex
+    };
+}
+
+/**
+ * Check if a slot is occupied by another button
+ * @param {number} slotIndex - Slot index to check
+ * @param {string} excludeButtonId - Button ID to exclude from check (the one being dragged)
+ * @returns {boolean} True if slot is occupied
+ */
+function isSlotOccupied(slotIndex, excludeButtonId = null) {
+    if (!occupiedSlots.has(slotIndex)) {
+        return false;
+    }
+    const occupyingButtonId = occupiedSlots.get(slotIndex);
+    return occupyingButtonId !== excludeButtonId;
+}
+
+/**
+ * Find the nearest unoccupied slot
+ * @param {number} startSlotIndex - Starting slot index
+ * @param {string} excludeButtonId - Button ID to exclude from check
+ * @param {DOMRect} sidebarNavRect - Sidebar nav bounding rect
+ * @param {number} buttonHeight - Button height
+ * @returns {{index: number, y: number}|null} Nearest unoccupied slot or null
+ */
+function findNearestUnoccupiedSlot(startSlotIndex, excludeButtonId, sidebarNavRect, buttonHeight) {
+    const maxSlotIndex = Math.floor((sidebarNavRect.height - buttonHeight) / SNAP_GRID_SIZE);
+    
+    // Search in both directions
+    for (let offset = 0; offset <= maxSlotIndex; offset++) {
+        // Check slot above
+        const slotAbove = startSlotIndex - offset;
+        if (slotAbove >= 0 && !isSlotOccupied(slotAbove, excludeButtonId)) {
+            return {
+                index: slotAbove,
+                y: getSlotY(slotAbove)
+            };
+        }
+        
+        // Check slot below
+        const slotBelow = startSlotIndex + offset;
+        if (slotBelow <= maxSlotIndex && !isSlotOccupied(slotBelow, excludeButtonId)) {
+            return {
+                index: slotBelow,
+                y: getSlotY(slotBelow)
+            };
+        }
+    }
+    
+    return null; // No unoccupied slot found
+}
+
+/**
+ * Update occupied slots map based on current button positions
+ */
+function updateOccupiedSlots() {
+    occupiedSlots.clear();
+    
+    // Get all nav-item buttons
+    const buttons = document.querySelectorAll('.nav-item');
+    buttons.forEach(button => {
+        const style = window.getComputedStyle(button);
+        if (style.position === 'absolute') {
+            const top = parseInt(button.style.top) || 0;
+            const slotIndex = getSlotIndex(top);
+            const buttonId = button.id;
+            
+            // Only mark as occupied if button is actually positioned
+            if (buttonId && top >= 0) {
+                occupiedSlots.set(slotIndex, buttonId);
+            }
+        }
+    });
+}
+
+/**
+ * Initialize snap-to-grid slots
+ * Creates visual slots that buttons can snap into
+ */
+function initializeSnapGrid() {
+    const sidebarNav = document.querySelector('.sidebar-nav');
+    if (!sidebarNav) {
+        return;
+    }
+    
+    // Create grid overlay canvas for visual feedback
+    let gridCanvas = document.getElementById('snap-grid-overlay');
+    if (!gridCanvas) {
+        gridCanvas = document.createElement('canvas');
+        gridCanvas.id = 'snap-grid-overlay';
+        gridCanvas.className = 'snap-grid-overlay';
+        sidebarNav.appendChild(gridCanvas);
+    }
+    
+    // Set canvas size to match sidebar-nav
+    const resizeGrid = () => {
+        const rect = sidebarNav.getBoundingClientRect();
+        gridCanvas.width = rect.width;
+        gridCanvas.height = rect.height;
+        gridCanvas.style.width = `${rect.width}px`;
+        gridCanvas.style.height = `${rect.height}px`;
+        drawSnapGrid(gridCanvas);
+    };
+    
+    resizeGrid();
+    window.addEventListener('resize', resizeGrid);
+    
+    // Update grid when sidebar opens/closes
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) {
+        const observer = new MutationObserver(() => {
+            if (sidebar.classList.contains('open')) {
+                setTimeout(resizeGrid, 100); // Wait for transition
+            }
+        });
+        observer.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+    }
+    
+    // Show grid by default when dragging
+    showSnapGrid = false; // Hidden by default, shown when dragging
+}
+
+/**
+ * Draw snap grid overlay
+ * @param {HTMLCanvasElement} canvas - Canvas element to draw on
+ */
+function drawSnapGrid(canvas) {
+    if (!showSnapGrid) {
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+    }
+    
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw horizontal grid lines (slot boundaries) - make them more visible
+    ctx.strokeStyle = 'rgba(74, 144, 226, 0.6)'; // More visible blue
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]); // Dashed lines
+    
+    for (let y = 0; y < canvas.height; y += SNAP_GRID_SIZE) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+    
+    // Draw slot highlights (subtle background for each slot)
+    ctx.fillStyle = 'rgba(74, 144, 226, 0.1)'; // More visible
+    for (let y = 0; y < canvas.height; y += SNAP_GRID_SIZE) {
+        ctx.fillRect(0, y, canvas.width, SNAP_GRID_SIZE);
+    }
+    
+    // Draw vertical lines at edges to show button boundaries (optional)
+    ctx.strokeStyle = 'rgba(74, 144, 226, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    const sidebarPadding = 20;
+    ctx.beginPath();
+    ctx.moveTo(sidebarPadding, 0);
+    ctx.lineTo(sidebarPadding, canvas.height);
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.moveTo(canvas.width - sidebarPadding, 0);
+    ctx.lineTo(canvas.width - sidebarPadding, canvas.height);
+    ctx.stroke();
+    
+    ctx.setLineDash([]); // Reset line dash
+}
+
+/**
+ * Update snap grid visibility
+ * @param {boolean} visible - Whether to show the grid
+ */
+function updateSnapGridVisibility(visible) {
+    showSnapGrid = visible;
+    const gridCanvas = document.getElementById('snap-grid-overlay');
+    if (gridCanvas) {
+        // Resize canvas if needed
+        const sidebarNav = document.querySelector('.sidebar-nav');
+        if (sidebarNav) {
+            const rect = sidebarNav.getBoundingClientRect();
+            gridCanvas.width = rect.width;
+            gridCanvas.height = rect.height;
+            gridCanvas.style.width = `${rect.width}px`;
+            gridCanvas.style.height = `${rect.height}px`;
+        }
+        
+        if (visible) {
+            // Redraw grid when showing
+            drawSnapGrid(gridCanvas);
+            // Ensure canvas is visible
+            gridCanvas.style.display = 'block';
+            gridCanvas.style.opacity = '0.6';
+        } else {
+            const ctx = gridCanvas.getContext('2d');
+            ctx.clearRect(0, 0, gridCanvas.width, gridCanvas.height);
+            gridCanvas.style.display = 'none';
+        }
+    }
 }
 
 /**
@@ -1453,6 +1810,11 @@ export function loadButtonPositions() {
                 button.style.margin = '0';
             }
         });
+        
+        // Update occupied slots after loading positions
+        setTimeout(() => {
+            updateOccupiedSlots();
+        }, 100);
     } catch (error) {
         console.error('Error loading button positions:', error);
     }

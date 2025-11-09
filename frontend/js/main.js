@@ -38,6 +38,8 @@ const appState = {
     cameraReady: false,
     cameraStream: null,
     cameraFlipped: false, // Camera mirror/flip state
+    availableCameras: [], // List of available camera devices
+    selectedCameraId: null, // Currently selected camera device ID
     features: {
         speech: { enabled: false },
         sign: { enabled: false },
@@ -78,6 +80,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Initialize camera flip toggle
     initializeCameraFlip();
+    
+    // Initialize camera selector (will be populated after cameras are enumerated)
+    initializeCameraSelector();
     
     // Initialize ML modules (speech-to-text, scene description, etc.)
     initializeMLModules();
@@ -183,6 +188,56 @@ function updateSidebarState() {
 /**
  * Initialize camera and check permissions
  */
+/**
+ * Enumerate available cameras
+ * @param {boolean} skipPermissionCheck - Skip permission request if we already have a stream
+ */
+async function enumerateCameras(skipPermissionCheck = false) {
+    try {
+        // If we don't have permission yet, request it first (required for enumerateDevices to show labels)
+        if (!skipPermissionCheck) {
+            try {
+                const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                // Stop the temporary stream
+                tempStream.getTracks().forEach(track => track.stop());
+            } catch (error) {
+                console.warn('Could not request permission for camera enumeration:', error);
+            }
+        }
+        
+        // Now enumerate devices
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        
+        appState.availableCameras = videoDevices;
+        console.log('Available cameras:', videoDevices.map(d => ({ id: d.deviceId, label: d.label })));
+        
+        // Load saved camera preference only if we haven't set one yet
+        if (!appState.selectedCameraId) {
+            const savedCameraId = localStorage.getItem('selectedCameraId');
+            if (savedCameraId && videoDevices.find(d => d.deviceId === savedCameraId)) {
+                appState.selectedCameraId = savedCameraId;
+            } else if (videoDevices.length > 0) {
+                // Use first camera as default, or prefer back camera on mobile
+                const backCamera = videoDevices.find(d => 
+                    d.label.toLowerCase().includes('back') || 
+                    d.label.toLowerCase().includes('rear') ||
+                    d.label.toLowerCase().includes('environment')
+                );
+                appState.selectedCameraId = backCamera ? backCamera.deviceId : videoDevices[0].deviceId;
+            }
+        }
+        
+        // Update camera selector UI
+        updateCameraSelector();
+        
+        return videoDevices;
+    } catch (error) {
+        console.error('Error enumerating cameras:', error);
+        return [];
+    }
+}
+
 async function initializeCamera() {
     updateCameraStatus('Requesting camera access...', false);
     
@@ -192,16 +247,37 @@ async function initializeCamera() {
             throw new Error('Camera API not supported in this browser');
         }
         
-        // Request camera access
+        // Enumerate cameras first (only if we haven't done it yet)
+        if (appState.availableCameras.length === 0) {
+            await enumerateCameras(false);
+        } else {
+            // If we already have cameras, just update the list (skip permission check since we already have a stream)
+            await enumerateCameras(true);
+        }
+        
+        // Request camera access with selected camera
         const constraints = {
             video: { 
-                facingMode: 'environment', // Use back camera on mobile (preferred)
                 width: { ideal: 1280 },
                 height: { ideal: 720 }
             } 
         };
         
+        // Use specific camera if selected, otherwise use facingMode fallback
+        if (appState.selectedCameraId) {
+            constraints.video.deviceId = { exact: appState.selectedCameraId };
+        } else {
+            constraints.video.facingMode = 'environment'; // Fallback: Use back camera on mobile
+        }
+        
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        // Store stream in app state
+        appState.cameraStream = stream;
+        
+        // Now that we have a stream, re-enumerate cameras to get proper labels
+        // (cameras won't have labels until after permission is granted and a stream is active)
+        await enumerateCameras(true); // Skip permission check since we already have a stream
         
         // Get video element
         const video = document.getElementById('camera-video');
@@ -216,9 +292,8 @@ async function initializeCamera() {
         // Wait for video metadata to load
         const playVideo = () => {
             video.play().then(() => {
-                // Camera feed is ready
+                // Camera feed is ready (stream already stored in appState.cameraStream above)
                 appState.cameraReady = true;
-                appState.cameraStream = stream;
                 updateCameraStatus('Camera ready', true);
                 console.log('Camera initialized successfully');
                 console.log('Video dimensions:', video.videoWidth, 'x', video.videoHeight);
@@ -841,6 +916,79 @@ function updateFlipCameraUI() {
             statusElement.textContent = 'Off';
         }
     }
+}
+
+/**
+ * Update camera selector dropdown
+ */
+function updateCameraSelector() {
+    const cameraSelect = document.getElementById('camera-select');
+    if (!cameraSelect) {
+        return;
+    }
+    
+    // Clear existing options
+    cameraSelect.innerHTML = '';
+    
+    if (appState.availableCameras.length === 0) {
+        cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+        return;
+    }
+    
+    // Add cameras to dropdown
+    appState.availableCameras.forEach((camera, index) => {
+        const option = document.createElement('option');
+        option.value = camera.deviceId;
+        option.textContent = camera.label || `Camera ${index + 1}`;
+        if (camera.deviceId === appState.selectedCameraId) {
+            option.selected = true;
+        }
+        cameraSelect.appendChild(option);
+    });
+}
+
+/**
+ * Initialize camera selector
+ */
+function initializeCameraSelector() {
+    const cameraSelect = document.getElementById('camera-select');
+    if (!cameraSelect) {
+        return;
+    }
+    
+    // Add change event listener
+    cameraSelect.addEventListener('change', async (e) => {
+        const selectedCameraId = e.target.value;
+        if (selectedCameraId && selectedCameraId !== appState.selectedCameraId) {
+            console.log('Switching camera to:', selectedCameraId);
+            await switchCamera(selectedCameraId);
+        }
+    });
+}
+
+/**
+ * Switch to a different camera
+ */
+async function switchCamera(deviceId) {
+    if (!deviceId) {
+        console.error('No device ID provided');
+        return;
+    }
+    
+    updateCameraStatus('Switching camera...', false);
+    
+    // Stop current stream
+    if (appState.cameraStream) {
+        appState.cameraStream.getTracks().forEach(track => track.stop());
+        appState.cameraStream = null;
+    }
+    
+    // Update selected camera
+    appState.selectedCameraId = deviceId;
+    localStorage.setItem('selectedCameraId', deviceId);
+    
+    // Reinitialize camera
+    await initializeCamera();
 }
 
 /**
