@@ -26,6 +26,7 @@ const MIN_FACE_SIZE = 50; // Minimum face size in pixels
 const FACE_TRACKING_DISTANCE_THRESHOLD = 80; // Pixels - faces closer than this are considered the same (reduced for better separation)
 const MIN_CONFIDENCE_FOR_REGISTRATION = 0.75; // Only register high-confidence detections
 const RECOGNIZED_FACE_CACHE_TIMEOUT = 6000; // Keep recognized faces in cache for 6 seconds (increased for angle tolerance)
+const UNKNOWN_FACE_BUFFER_TIME_MS = 4000; // Wait 4 seconds before prompting for unknown face registration
 // Removed MIN_DISTANCE_BETWEEN_FACES - using position-based deduplication in detection loop
 
 // Module state
@@ -36,6 +37,8 @@ let knownFaces = []; // Array of { id, name, notes, embedding }
 let recognitionTimeoutId = null;
 let recognizedFacesCache = new Map(); // Cache of currently recognized faces
 let pendingRegistration = null; // Face waiting to be registered
+let unknownFacesBuffer = new Map(); // Track unknown faces with timestamps for confidence buffer
+// Key: faceKey, Value: { firstSeen: timestamp, detection: detection, lastSeen: timestamp }
 
 // Callback functions
 let onFaceRecognizedCallback = null;
@@ -139,6 +142,89 @@ export function onFaceUpdate(callback) {
  */
 export function onFaceRemoved(callback) {
     onFaceRemovedCallback = callback;
+}
+
+/**
+ * Get the primary face currently on screen (largest/centermost recognized face).
+ * Useful for associating conversations with a specific person.
+ * 
+ * @returns {Object|null} Face data with id, name, and faceKey, or null if no recognized face
+ */
+/**
+ * Get all recognized faces currently on screen
+ * 
+ * @returns {Array} Array of face objects with { faceId, name, faceKey }
+ */
+export function getAllRecognizedFaces() {
+    const activeFaces = getAllActiveFaces();
+    
+    // Filter to only recognized faces (not unknown)
+    const recognizedFaces = activeFaces.filter(face => 
+        face.isRecognized && face.faceData && face.faceData.id
+    );
+    
+    // Return array of face info
+    return recognizedFaces.map(face => ({
+        faceId: face.faceData.id,
+        name: face.faceData.name,
+        faceKey: face.faceKey,
+        detection: face.detection // Include detection for size calculation
+    }));
+}
+
+/**
+ * Get the primary (largest/most prominent) face on screen
+ * 
+ * @returns {Object|null} Face object with { faceId, name, faceKey } or null
+ */
+export function getPrimaryFaceOnScreen() {
+    const recognizedFaces = getAllRecognizedFaces();
+    
+    if (recognizedFaces.length === 0) {
+        return null;
+    }
+    
+    // If only one recognized face, return it
+    if (recognizedFaces.length === 1) {
+        const face = recognizedFaces[0];
+        return {
+            faceId: face.faceId,
+            name: face.name,
+            faceKey: face.faceKey
+        };
+    }
+    
+    // Multiple faces - find the largest one (most prominent)
+    let largestFace = null;
+    let largestSize = 0;
+    
+    for (const face of recognizedFaces) {
+        if (face.detection && face.detection.detection && face.detection.detection.box) {
+            const box = face.detection.detection.box;
+            const size = box.width * box.height;
+            
+            if (size > largestSize) {
+                largestSize = size;
+                largestFace = face;
+            }
+        }
+    }
+    
+    if (largestFace) {
+        return {
+            faceId: largestFace.faceId,
+            name: largestFace.name,
+            faceKey: largestFace.faceKey
+        };
+    }
+    
+    // Fallback: return first recognized face
+    const firstFace = recognizedFaces[0];
+    return {
+        faceId: firstFace.faceId,
+        name: firstFace.name,
+        faceKey: firstFace.faceKey
+    };
 }
 
 /**
@@ -313,6 +399,9 @@ async function recognitionLoop() {
         // Clean up cache for faces that are no longer detected
         cleanupRecognizedFacesCache(validDetections);
         
+        // Clean up stale unknown faces buffer
+        cleanupUnknownFacesBuffer();
+        
         // Call face update callback with all active faces
         if (onFaceUpdateCallback) {
             const allFaces = getAllActiveFaces();
@@ -443,6 +532,9 @@ function handleRecognizedFace(faceData, detection) {
             faceId: faceData.id || `recognized_${Date.now()}`
         });
         
+        // Clear this face from unknown faces buffer (it's now recognized)
+        clearUnknownFaceFromBuffer(faceKey);
+        
         console.log(`Recognized face: ${faceData.name} (new key: ${faceKey})`);
         
         // Call callback if set (only for first recognition)
@@ -450,6 +542,8 @@ function handleRecognizedFace(faceData, detection) {
             onFaceRecognizedCallback(faceData, detection, faceKey);
         }
     } else {
+        // Clear this face from unknown faces buffer (it's now recognized)
+        clearUnknownFaceFromBuffer(faceKey);
         // Update existing face - same person, just updating position
         existing.lastSeen = Date.now();
         existing.detection = detection; // Update detection with new position
@@ -479,6 +573,7 @@ function handleRecognizedFace(faceData, detection) {
 
 /**
  * Handle an unknown face.
+ * Implements confidence buffer - only prompts for registration after consistent detection.
  * 
  * @param {Object} detection - Face detection object from face-api.js
  */
@@ -488,37 +583,90 @@ function handleUnknownFace(detection) {
         return; // Skip low-confidence detections
     }
     
-    // Check if this face is already being tracked as unknown
-    const closestKey = findClosestFaceKey(detection);
+    const now = Date.now();
     
-    // Only trigger callback if this is a genuinely new unknown face
-    // (not one we're already processing)
-    if (!pendingRegistration || 
-        (closestKey && !recognizedFacesCache.has(closestKey)) ||
-        !closestKey) {
-        
-        const faceKey = closestKey || createFaceKey(detection);
-        
-        // Don't spam - only register if not already pending or if it's been a while
-        if (!pendingRegistration || 
-            pendingRegistration.key !== faceKey ||
-            Date.now() - pendingRegistration.timestamp > 5000) {
+    // Find closest existing face key for tracking
+    const closestKey = findClosestFaceKey(detection);
+    const faceKey = closestKey || createFaceKey(detection);
+    
+    // Check if this unknown face is already in the buffer
+    let unknownFace = unknownFacesBuffer.get(faceKey);
+    
+    if (!unknownFace) {
+        // New unknown face - add to buffer with timestamp
+        unknownFace = {
+            firstSeen: now,
+            lastSeen: now,
+            detection: detection,
+            key: faceKey
+        };
+        unknownFacesBuffer.set(faceKey, unknownFace);
+        console.log('Unknown face detected - starting confidence buffer', { 
+            confidence: detection.detection?.score,
+            position: detection.detection?.box,
+            faceKey: faceKey
+        });
+    } else {
+        // Update last seen timestamp
+        unknownFace.lastSeen = now;
+        unknownFace.detection = detection; // Update with latest detection
+    }
+    
+    // Check if this face has been consistently detected for the buffer time
+    const timeSinceFirstSeen = now - unknownFace.firstSeen;
+    
+    if (timeSinceFirstSeen >= UNKNOWN_FACE_BUFFER_TIME_MS) {
+        // Face has been consistently detected - check if we should prompt
+        // Only prompt if we don't already have a pending registration for this face
+        if (!pendingRegistration || pendingRegistration.key !== faceKey) {
+            console.log('Unknown face confirmed after buffer period', {
+                faceKey: faceKey,
+                timeDetected: timeSinceFirstSeen
+            });
             
+            // Set as pending registration
             pendingRegistration = {
                 key: faceKey,
                 detection: detection,
-                timestamp: Date.now()
+                timestamp: now
             };
             
-            console.log('Unknown face detected', { 
-                confidence: detection.detection?.score,
-                position: detection.detection?.box 
-            });
+            // Remove from buffer (we're now handling it)
+            unknownFacesBuffer.delete(faceKey);
             
-            // Call callback if set
+            // Call callback to trigger registration prompt
             if (onNewFaceCallback) {
                 onNewFaceCallback(detection, faceKey);
             }
+        }
+    }
+}
+
+/**
+ * Clear unknown face from buffer (called when face is recognized or disappears).
+ * This resets the confidence buffer for that face.
+ * 
+ * @param {string} faceKey - Face key to clear from buffer
+ */
+function clearUnknownFaceFromBuffer(faceKey) {
+    if (unknownFacesBuffer.has(faceKey)) {
+        unknownFacesBuffer.delete(faceKey);
+        console.log('Cleared unknown face from buffer:', faceKey);
+    }
+}
+
+/**
+ * Clean up stale entries from unknown faces buffer.
+ * Called periodically to remove faces that are no longer detected.
+ */
+function cleanupUnknownFacesBuffer() {
+    const now = Date.now();
+    const STALE_THRESHOLD = 3000; // Remove if not seen for 3 seconds
+    
+    for (const [faceKey, unknownFace] of unknownFacesBuffer.entries()) {
+        if (now - unknownFace.lastSeen > STALE_THRESHOLD) {
+            unknownFacesBuffer.delete(faceKey);
+            console.log('Removed stale unknown face from buffer:', faceKey);
         }
     }
 }

@@ -15,6 +15,9 @@ let isListening = false;
 let captionCallback = null;
 let currentTranscript = '';
 let transcriptTimeout = null;
+let isRecordingMemory = false; // Whether we're recording for memory
+let recordedTranscripts = []; // Accumulated transcripts during memory recording
+let finalTranscriptCallback = null; // Callback for final transcripts (for memory recording)
 
 /**
  * Initialize speech-to-text recognition
@@ -157,7 +160,20 @@ function handleSpeechResult(event) {
     
     // Update current transcript
     if (finalTranscript) {
-        currentTranscript = finalTranscript.trim();
+        const finalText = finalTranscript.trim();
+        currentTranscript = finalText;
+        
+        // If recording memory, collect this final transcript
+        if (isRecordingMemory && finalText) {
+            recordedTranscripts.push(finalText);
+            console.log('Collected transcript for memory:', finalText);
+        }
+        
+        // Call final transcript callback if set (for memory recording)
+        if (finalTranscriptCallback && finalText) {
+            finalTranscriptCallback(finalText);
+        }
+        
         displayCaption(currentTranscript, false);
         
         // Process voice commands from final transcript
@@ -332,3 +348,52 @@ export function setAppState(state) {
     appState = state;
 }
 
+/**
+ * Start recording transcripts for memory.
+ * Collected transcripts will be accumulated until stopRecordingMemory() is called.
+ */
+export function startRecordingMemory() {
+    isRecordingMemory = true;
+    recordedTranscripts = []; // Reset accumulated transcripts
+    console.log('Started recording memory - transcripts will be collected');
+}
+
+/**
+ * Stop recording transcripts for memory.
+ * 
+ * @returns {string} Combined transcript of all collected transcripts
+ */
+export function stopRecordingMemory() {
+    isRecordingMemory = false;
+    const combinedTranscript = recordedTranscripts.join(' ').trim();
+    recordedTranscripts = []; // Clear after getting the combined transcript
+    console.log('Stopped recording memory. Collected transcript length:', combinedTranscript.length);
+    return combinedTranscript;
+}
+
+/**
+ * Get currently recorded transcripts (without stopping recording).
+ * 
+ * @returns {string} Combined transcript of all collected transcripts so far
+ */
+export function getRecordedTranscripts() {
+    return recordedTranscripts.join(' ').trim();
+}
+
+/**
+ * Check if currently recording memory.
+ * 
+ * @returns {boolean} True if recording memory
+ */
+export function isRecordingMemoryActive() {
+    return isRecordingMemory;
+}
+
+/**
+ * Set callback for final transcripts (useful for real-time memory recording).
+ * 
+ * @param {Function} callback - Callback function(transcript) called for each final transcript
+ */
+export function setFinalTranscriptCallback(callback) {
+    finalTranscriptCallback = callback;
+}

@@ -11,14 +11,17 @@
  * Environment variables must be prefixed with VITE_ to be accessible in client-side code (Vite requirement)
  */
 
+// IMPORTANT: Remove hardcoded fallback values in production
+// Use environment variables: VITE_FIREBASE_API_KEY, etc.
+// Get values from: Firebase Console > Project Settings > Your apps
 const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBVt34mIMaY3lodiRlS-qh0XmVDP9XkqwQ",
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "acceens-5f3ad.firebaseapp.com",
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "acceens-5f3ad",
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "acceens-5f3ad.firebasestorage.app",
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "384687344035",
-    appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:384687344035:web:e129c33106e4a7849eb216",
-    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-4K07SBY9RL"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
 };
 
 // Validate that required config values are present

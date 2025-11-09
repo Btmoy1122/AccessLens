@@ -11,6 +11,9 @@ import {
     stopListening, 
     setCaptionCallback,
     setAppState,
+    startRecordingMemory,
+    stopRecordingMemory,
+    isRecordingMemoryActive,
     setVoiceCommandProcessor
 } from '@ml/speech/speech-to-text.js';
 import {
@@ -52,7 +55,9 @@ import {
     onFaceRemoved,
     getPendingRegistration,
     clearPendingRegistration,
-    reloadKnownFaces
+    reloadKnownFaces,
+    getPrimaryFaceOnScreen,
+    getAllRecognizedFaces
 } from '@ml/vision/face-recognition.js';
 import {
     initFaceOverlays,
@@ -62,6 +67,7 @@ import {
     updateAllOverlayPositions,
     cleanupInvisibleOverlays
 } from './face-overlays.js';
+import { addInteraction, getInteractions, getFaceMemorySummary } from '@backend/services/face-service.js';
 
 // Application State
 const appState = {
@@ -85,9 +91,22 @@ let sidebar, sidebarToggle, sidebarClose, sidebarOverlay;
 let cameraStatus, statusDot, statusText;
 let captionsContainer, captionsText;
 let faceRegistrationModal, faceModalClose, faceRegisterBtn, faceSkipBtn, faceNameInput, faceNotesInput;
+let memoryBtn, memoryStatus;
+let viewMemoriesBtn, memoriesModal, memoriesModalClose, memoriesModalTitle, memoriesList, memoriesLoading, memoriesEmpty;
+let faceSelectionModal, faceSelectionModalClose, faceSelectionList, faceSelectionCancelBtn;
 
 // Face registration state
 let currentPendingDetection = null; // Stores detection data for pending registration
+
+// Memory recording state
+let isMemoryRecording = false; // Whether memory recording is active
+let memoryStartTime = null; // Timestamp when memory recording started
+let selectedFaceForMemory = null; // Selected face for current memory recording session { faceId, name, faceKey }
+
+// Cache for latest summaries to avoid fetching on every frame
+// Shared across all face recognition callbacks
+const latestSummaryCache = new Map(); // Key: faceId, Value: { summary, timestamp }
+const SUMMARY_CACHE_TIMEOUT = 10000; // Refresh summary every 10 seconds
 
 /**
  * Initialize the application
@@ -197,6 +216,27 @@ document.addEventListener('DOMContentLoaded', () => {
             console.error('Error initializing face registration modal:', error);
         }
         
+        // Initialize memory recording
+        try {
+            initializeMemoryRecording();
+        } catch (error) {
+            console.error('Error initializing memory recording:', error);
+        }
+        
+        // Initialize face selection modal
+        try {
+            initializeFaceSelectionModal();
+        } catch (error) {
+            console.error('Error initializing face selection modal:', error);
+        }
+        
+        // Initialize view memories
+        try {
+            initializeViewMemories();
+        } catch (error) {
+            console.error('Error initializing view memories:', error);
+        }
+        
         // AR scene initialization deferred - A-Frame not loaded yet
         // initializeARScene();
         
@@ -242,6 +282,25 @@ function initializeDOMElements() {
     faceSkipBtn = document.getElementById('face-skip-btn');
     faceNameInput = document.getElementById('face-name');
     faceNotesInput = document.getElementById('face-notes');
+    
+    // Memory recording button elements
+    memoryBtn = document.getElementById('add-memory-btn');
+    memoryStatus = document.getElementById('status-memory');
+    
+    // View Memories button and modal elements
+    viewMemoriesBtn = document.getElementById('view-memories-btn');
+    memoriesModal = document.getElementById('memories-modal');
+    memoriesModalClose = document.getElementById('memories-modal-close');
+    memoriesModalTitle = document.getElementById('memories-modal-title');
+    memoriesList = document.getElementById('memories-list');
+    memoriesLoading = document.getElementById('memories-loading');
+    memoriesEmpty = document.getElementById('memories-empty');
+    
+    // Face selection modal elements
+    faceSelectionModal = document.getElementById('face-selection-modal');
+    faceSelectionModalClose = document.getElementById('face-selection-modal-close');
+    faceSelectionList = document.getElementById('face-selection-list');
+    faceSelectionCancelBtn = document.getElementById('face-selection-cancel-btn');
     
     // Ensure sidebar toggle is visible (should always be visible)
     if (sidebarToggle) {
@@ -1134,7 +1193,7 @@ function setupFaceRecognitionCallbacks() {
     });
     
     // Callback for face updates (every frame) - update overlays
-    onFaceUpdate((faces) => {
+    onFaceUpdate(async (faces) => {
         const video = document.getElementById('camera-video');
         if (!video || !appState.features.face.enabled) {
             return;
@@ -1142,28 +1201,101 @@ function setupFaceRecognitionCallbacks() {
         
         // Track which faces are currently visible
         const visibleFaceKeys = new Set();
+        const now = Date.now();
         
         // Update overlays for all active faces
         for (const face of faces) {
             if (face.detection && face.faceData) {
                 visibleFaceKeys.add(face.faceKey);
-                updateFaceOverlay(
-                    face.faceKey,
-                    face.faceData,
-                    face.detection,
-                    video
-                );
+                
+                // If this is a recognized face (has faceId), try to get latest summary
+                if (face.faceData.id) {
+                    const faceId = face.faceData.id;
+                    const cached = latestSummaryCache.get(faceId);
+                    
+                    // Check if we need to refresh the summary
+                    const shouldRefresh = !cached || (now - cached.timestamp) > SUMMARY_CACHE_TIMEOUT;
+                    
+                    if (shouldRefresh) {
+                        // Fetch memory summary asynchronously
+                        getFaceMemorySummary(faceId).then(summary => {
+                            // Update cache
+                            latestSummaryCache.set(faceId, {
+                                summary: summary,
+                                timestamp: now
+                            });
+                            
+                            // Update the faceData with memory summary
+                            const updatedFaceData = {
+                                ...face.faceData,
+                                memorySummary: summary,
+                                latestSummary: summary // Keep for backward compatibility
+                            };
+                            
+                            // Update overlay with new summary
+                            updateFaceOverlay(
+                                face.faceKey,
+                                updatedFaceData,
+                                face.detection,
+                                video
+                            );
+                        }).catch(error => {
+                            console.error('Error fetching latest summary for face:', faceId, error);
+                            // Fall back to current faceData
+                            updateFaceOverlay(
+                                face.faceKey,
+                                face.faceData,
+                                face.detection,
+                                video
+                            );
+                        });
+                    } else if (cached) {
+                        // Use cached summary
+                        const updatedFaceData = {
+                            ...face.faceData,
+                            memorySummary: cached.summary,
+                            latestSummary: cached.summary // Keep for backward compatibility
+                        };
+                        updateFaceOverlay(
+                            face.faceKey,
+                            updatedFaceData,
+                            face.detection,
+                            video
+                        );
+                    } else {
+                        // No cache, update with current faceData
+                        updateFaceOverlay(
+                            face.faceKey,
+                            face.faceData,
+                            face.detection,
+                            video
+                        );
+                    }
+                } else {
+                    // Unknown face, just update overlay normally
+                    updateFaceOverlay(
+                        face.faceKey,
+                        face.faceData,
+                        face.detection,
+                        video
+                    );
+                }
             }
         }
         
         // Remove overlays for faces that are no longer visible
         // This prevents old tags from accumulating when faces move
         cleanupInvisibleOverlays(visibleFaceKeys);
+        
+        // Update View Memories button visibility based on recognized faces
+        updateViewMemoriesButton();
     });
     
     // Callback when a face is removed from cache
     onFaceRemoved((faceKey) => {
         removeFaceOverlay(faceKey);
+        // Update button visibility when face is removed
+        updateViewMemoriesButton();
     });
 }
 
@@ -1212,6 +1344,462 @@ function initializeFaceRegistrationModal() {
             }
         });
     }
+}
+
+/**
+ * Initialize memory recording button and functionality
+ */
+function initializeMemoryRecording() {
+    if (!memoryBtn) {
+        console.warn('Memory button not found');
+        return;
+    }
+    
+    // Handle memory button click
+    memoryBtn.addEventListener('click', toggleMemoryRecording);
+    
+    // Update initial state
+    updateMemoryRecordingUI();
+}
+
+/**
+ * Toggle memory recording on/off
+ */
+function toggleMemoryRecording() {
+    if (isMemoryRecording) {
+        stopMemoryRecording();
+    } else {
+        startMemoryRecording();
+    }
+}
+
+/**
+ * Start memory recording
+ */
+function startMemoryRecording() {
+    if (isMemoryRecording) {
+        return; // Already recording
+    }
+    
+    // Check if speech recognition is enabled
+    if (!appState.features.speech.enabled) {
+        alert('Please enable Speech Captions first to record memories.');
+        return;
+    }
+    
+    // Get all recognized faces on screen
+    const recognizedFaces = getAllRecognizedFaces();
+    
+    if (recognizedFaces.length === 0) {
+        alert('No recognized face detected. Please ensure face recognition is enabled and a registered person is visible on camera.');
+        return;
+    }
+    
+    // If only one face, use it automatically
+    if (recognizedFaces.length === 1) {
+        selectedFaceForMemory = recognizedFaces[0];
+        startRecordingForFace(selectedFaceForMemory);
+        return;
+    }
+    
+    // Multiple faces detected - show selection modal
+    showFaceSelectionModal(recognizedFaces);
+}
+
+/**
+ * Stop memory recording and save
+ */
+async function stopMemoryRecording() {
+    if (!isMemoryRecording) {
+        return; // Not recording
+    }
+    
+    // Stop recording and get transcript
+    const transcript = stopRecordingMemory();
+    
+    console.log('Stopped recording. Transcript length:', transcript?.length || 0);
+    console.log('Transcript content:', transcript);
+    
+    if (!transcript || transcript.trim().length === 0) {
+        // No transcript collected
+        isMemoryRecording = false;
+        selectedFaceForMemory = null; // Clear selected face
+        updateMemoryRecordingUI();
+        updateCaptions('⚠️ No speech detected during recording. Make sure Speech Captions is enabled and you spoke clearly.', false);
+        console.warn('No transcript collected - memory not saved');
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 4000);
+        return;
+    }
+    
+    // Use the selected face (set when recording started)
+    const faceForMemory = selectedFaceForMemory;
+    if (!faceForMemory) {
+        // Fallback: try to get primary face
+        const primaryFace = getPrimaryFaceOnScreen();
+        if (!primaryFace) {
+            console.warn('No face selected and no face detected when stopping memory recording');
+            isMemoryRecording = false;
+            selectedFaceForMemory = null;
+            updateMemoryRecordingUI();
+            updateCaptions('⚠️ Face not detected. Memory not saved.', false);
+            setTimeout(() => {
+                updateCaptions('', false);
+            }, 3000);
+            return;
+        }
+        // Use primary face as fallback
+        selectedFaceForMemory = primaryFace;
+    }
+    
+    // Save to Firebase
+    try {
+        updateCaptions('💾 Saving memory...', false);
+        const interactionId = await addInteraction({
+            faceId: selectedFaceForMemory.faceId,
+            rawTranscript: transcript, // Raw transcript - Cloud Function will generate summary
+            userId: 'default' // TODO: Get from app state or auth
+        });
+        
+        console.log('Memory saved successfully:', interactionId);
+        console.log('Memory details:', {
+            faceId: selectedFaceForMemory.faceId,
+            faceName: selectedFaceForMemory.name,
+            transcriptLength: transcript.length,
+            interactionId: interactionId
+        });
+        updateCaptions(`✅ Memory saved for ${selectedFaceForMemory.name}. Summary will be generated automatically.`, false);
+        
+        // Clear message after 3 seconds
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 3000);
+    } catch (error) {
+        console.error('Error saving memory:', error);
+        updateCaptions('❌ Error saving memory. Please try again.', true);
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 3000);
+    }
+    
+    // Reset state
+    isMemoryRecording = false;
+    memoryStartTime = null;
+    selectedFaceForMemory = null; // Clear selected face after saving
+    updateMemoryRecordingUI();
+}
+
+/**
+ * Update memory recording UI state
+ */
+function updateMemoryRecordingUI() {
+    if (!memoryBtn || !memoryStatus) {
+        return;
+    }
+    
+    if (isMemoryRecording) {
+        memoryBtn.classList.add('active');
+        memoryStatus.textContent = 'Recording...';
+        memoryStatus.style.color = '#ff6b6b';
+    } else {
+        memoryBtn.classList.remove('active');
+        memoryStatus.textContent = 'Ready';
+        memoryStatus.style.color = '';
+    }
+}
+
+/**
+ * Start recording memory for a specific face
+ * 
+ * @param {Object} face - Face object with { faceId, name, faceKey }
+ */
+function startRecordingForFace(face) {
+    selectedFaceForMemory = face;
+    isMemoryRecording = true;
+    memoryStartTime = Date.now();
+    startRecordingMemory();
+    
+    console.log('Memory recording started for:', face.name);
+    updateMemoryRecordingUI();
+    
+    // Show feedback
+    updateCaptions(`💾 Recording memory for ${face.name}...`, false);
+    setTimeout(() => {
+        const currentText = captionsText?.textContent;
+        if (currentText && currentText.includes('Recording memory')) {
+            updateCaptions('', false);
+        }
+    }, 2000);
+}
+
+/**
+ * Show face selection modal when multiple faces are detected
+ * 
+ * @param {Array} faces - Array of face objects with { faceId, name, faceKey }
+ */
+function showFaceSelectionModal(faces) {
+    if (!faceSelectionModal || !faceSelectionList) {
+        console.error('Face selection modal elements not found');
+        return;
+    }
+    
+    // Clear previous list
+    faceSelectionList.innerHTML = '';
+    
+    // Create buttons for each face
+    faces.forEach((face) => {
+        const button = document.createElement('button');
+        button.className = 'face-selection-btn';
+        button.style.cssText = 'width: 100%; padding: 15px; margin: 10px 0; font-size: 16px; text-align: left; background: #f0f0f0; border: 2px solid #ddd; border-radius: 8px; cursor: pointer; transition: all 0.2s;';
+        button.innerHTML = `<strong>${face.name}</strong>`;
+        button.addEventListener('click', () => {
+            hideFaceSelectionModal();
+            startRecordingForFace(face);
+        });
+        button.addEventListener('mouseenter', () => {
+            button.style.background = '#e0e0e0';
+            button.style.borderColor = '#4CAF50';
+        });
+        button.addEventListener('mouseleave', () => {
+            button.style.background = '#f0f0f0';
+            button.style.borderColor = '#ddd';
+        });
+        faceSelectionList.appendChild(button);
+    });
+    
+    // Show modal
+    faceSelectionModal.style.display = 'flex';
+    setTimeout(() => {
+        if (faceSelectionModal) {
+            faceSelectionModal.classList.add('show');
+        }
+    }, 10);
+}
+
+/**
+ * Hide face selection modal
+ */
+function hideFaceSelectionModal() {
+    if (!faceSelectionModal) {
+        return;
+    }
+    faceSelectionModal.classList.remove('show');
+    setTimeout(() => {
+        if (faceSelectionModal) {
+            faceSelectionModal.style.display = 'none';
+        }
+    }, 300);
+}
+
+/**
+ * Initialize face selection modal
+ */
+function initializeFaceSelectionModal() {
+    if (!faceSelectionModal) {
+        console.warn('Face selection modal not found');
+        return;
+    }
+    
+    // Close button
+    if (faceSelectionModalClose) {
+        faceSelectionModalClose.addEventListener('click', () => {
+            hideFaceSelectionModal();
+        });
+    }
+    
+    // Cancel button
+    if (faceSelectionCancelBtn) {
+        faceSelectionCancelBtn.addEventListener('click', () => {
+            hideFaceSelectionModal();
+        });
+    }
+    
+    // Close on backdrop click
+    if (faceSelectionModal) {
+        faceSelectionModal.addEventListener('click', (e) => {
+            if (e.target === faceSelectionModal) {
+                hideFaceSelectionModal();
+            }
+        });
+    }
+}
+
+/**
+ * Initialize view memories functionality
+ */
+function initializeViewMemories() {
+    if (!viewMemoriesBtn) {
+        console.warn('View memories button not found');
+        return;
+    }
+    
+    // Handle view memories button click
+    viewMemoriesBtn.addEventListener('click', async () => {
+        const primaryFace = getPrimaryFaceOnScreen();
+        if (!primaryFace) {
+            alert('No recognized face detected. Please ensure a registered person is visible on camera.');
+            return;
+        }
+        
+        await showMemoriesModal(primaryFace.faceId, primaryFace.name);
+    });
+    
+    // Handle modal close button
+    if (memoriesModalClose) {
+        memoriesModalClose.addEventListener('click', () => {
+            hideMemoriesModal();
+        });
+    }
+    
+    // Close modal when clicking outside
+    if (memoriesModal) {
+        memoriesModal.addEventListener('click', (e) => {
+            if (e.target === memoriesModal) {
+                hideMemoriesModal();
+            }
+        });
+    }
+}
+
+/**
+ * Update View Memories button visibility based on recognized faces
+ */
+function updateViewMemoriesButton() {
+    if (!viewMemoriesBtn) {
+        return;
+    }
+    
+    // Only show button if face recognition is enabled
+    if (!appState.features.face.enabled) {
+        viewMemoriesBtn.style.display = 'none';
+        return;
+    }
+    
+    const primaryFace = getPrimaryFaceOnScreen();
+    
+    if (primaryFace) {
+        // Show button when a recognized face is on screen
+        viewMemoriesBtn.style.display = 'flex';
+        console.log('View Memories button shown for:', primaryFace.name);
+    } else {
+        // Hide button when no recognized face
+        viewMemoriesBtn.style.display = 'none';
+    }
+}
+
+/**
+ * Show memories modal with interactions for a specific face
+ */
+async function showMemoriesModal(faceId, faceName) {
+    if (!memoriesModal || !memoriesList) {
+        console.error('Memories modal elements not found');
+        return;
+    }
+    
+    // Show modal
+    memoriesModal.style.display = 'flex';
+    setTimeout(() => {
+        memoriesModal.classList.add('show');
+    }, 10);
+    
+    // Set title
+    if (memoriesModalTitle) {
+        memoriesModalTitle.textContent = `Memories: ${faceName}`;
+    }
+    
+    // Show loading state
+    if (memoriesLoading) {
+        memoriesLoading.style.display = 'block';
+    }
+    if (memoriesEmpty) {
+        memoriesEmpty.style.display = 'none';
+    }
+    memoriesList.innerHTML = '';
+    
+    try {
+        // Fetch interactions
+        const interactions = await getInteractions(faceId);
+        console.log(`Fetched ${interactions.length} interactions for face:`, faceId);
+        
+        // Hide loading
+        if (memoriesLoading) {
+            memoriesLoading.style.display = 'none';
+        }
+        
+        if (interactions.length === 0) {
+            // Show empty state
+            if (memoriesEmpty) {
+                memoriesEmpty.style.display = 'block';
+            }
+            return;
+        }
+        
+        // Display interactions
+        interactions.forEach((interaction) => {
+            const item = document.createElement('div');
+            item.className = 'memory-item';
+            
+            // Header with date
+            const header = document.createElement('div');
+            header.className = 'memory-header';
+            
+            const date = document.createElement('div');
+            date.className = 'memory-date';
+            if (interaction.createdAt) {
+                const dateObj = interaction.createdAt.toDate();
+                date.textContent = dateObj.toLocaleString();
+            } else {
+                date.textContent = 'Unknown date';
+            }
+            header.appendChild(date);
+            item.appendChild(header);
+            
+            // Summary (if available)
+            if (interaction.summary) {
+                const summary = document.createElement('div');
+                summary.className = 'memory-summary';
+                summary.textContent = interaction.summary;
+                item.appendChild(summary);
+            }
+            
+            // Transcript (support both rawTranscript and transcript for backward compatibility)
+            const transcriptText = interaction.rawTranscript || interaction.transcript;
+            if (transcriptText) {
+                const transcriptLabel = document.createElement('div');
+                transcriptLabel.className = 'memory-transcript-label';
+                transcriptLabel.textContent = 'Full Conversation';
+                item.appendChild(transcriptLabel);
+                
+                const transcript = document.createElement('div');
+                transcript.className = 'memory-transcript';
+                transcript.textContent = transcriptText;
+                item.appendChild(transcript);
+            }
+            
+            memoriesList.appendChild(item);
+        });
+    } catch (error) {
+        console.error('Error fetching memories:', error);
+        if (memoriesLoading) {
+            memoriesLoading.style.display = 'none';
+        }
+        memoriesList.innerHTML = '<p style="color: #ff6b6b;">Error loading memories. Please try again.</p>';
+    }
+}
+
+/**
+ * Hide memories modal
+ */
+function hideMemoriesModal() {
+    if (!memoriesModal) {
+        return;
+    }
+    
+    memoriesModal.classList.remove('show');
+    setTimeout(() => {
+        memoriesModal.style.display = 'none';
+    }, 300);
 }
 
 /**

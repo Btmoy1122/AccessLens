@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generate Summary - AccessLens</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #555;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        textarea {
+            min-height: 100px;
+            font-family: monospace;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+        .result h3 {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Generate Summary for Interaction</h1>
+        
+        <div class="form-group">
+            <label for="interactionId">Interaction ID:</label>
+            <input type="text" id="interactionId" placeholder="Enter interaction ID from Firebase Console">
+        </div>
+        
+        <div class="form-group">
+            <label for="openaiKey">OpenAI API Key:</label>
+            <input type="password" id="openaiKey" placeholder="Enter your OpenAI API key">
+        </div>
+        
+        <button id="generateBtn" onclick="generateSummary()">Generate Summary</button>
+        
+        <div id="status" class="status"></div>
+        <div id="result" class="result" style="display: none;"></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore, doc, getDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firestore.js';
+        
+        // Firebase config - MUST be configured
+        // IMPORTANT: Create scripts/firebase-config.json from firebase-config.json.example
+        // Copy your Firebase config from: Firebase Console > Project Settings > Your apps
+        // 
+        // SECURITY NOTE: 
+        // - Firebase client API keys are PUBLIC but should NOT be hardcoded in git
+        // - They work with Firestore security rules to protect your data
+        // - Get your config from: Firebase Console > Project Settings > Your apps
+        // - OpenAI API key should NEVER be hardcoded - user enters it in the form
+        
+        // Load Firebase config from external file (not in git)
+        let firebaseConfig = null;
+        
+        async function loadFirebaseConfig() {
+            try {
+                const response = await fetch('./firebase-config.json');
+                if (response.ok) {
+                    firebaseConfig = await response.json();
+                    return true;
+                }
+            } catch (e) {
+                console.error('Could not load firebase-config.json:', e);
+            }
+            return false;
+        }
+        
+        // Initialize Firebase after config is loaded
+        let app, db;
+        
+        async function initFirebase() {
+            const configLoaded = await loadFirebaseConfig();
+            if (!configLoaded || !firebaseConfig || !firebaseConfig.apiKey) {
+                alert('ERROR: Firebase configuration missing!\n\n' +
+                      'Please create scripts/firebase-config.json from firebase-config.json.example\n' +
+                      'Get your config from: Firebase Console > Project Settings > Your apps');
+                document.body.innerHTML = '<div class="container"><h1>Configuration Required</h1>' +
+                    '<p>Please create <code>scripts/firebase-config.json</code> from <code>firebase-config.json.example</code></p>' +
+                    '<p>Get your Firebase config from: Firebase Console > Project Settings > Your apps</p></div>';
+                return false;
+            }
+            
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            return true;
+        }
+        
+        // Initialize on page load
+        await initFirebase();
+        
+        // Make functions available globally
+        window.generateSummary = async function() {
+            // Ensure Firebase is initialized
+            if (!app || !db) {
+                const initialized = await initFirebase();
+                if (!initialized) {
+                    showStatus('Firebase not initialized. Please configure firebase-config.json', 'error');
+                    return;
+                }
+            }
+            
+            const interactionId = document.getElementById('interactionId').value.trim();
+            const openaiKey = document.getElementById('openaiKey').value.trim();
+            const statusDiv = document.getElementById('status');
+            const resultDiv = document.getElementById('result');
+            const generateBtn = document.getElementById('generateBtn');
+            
+            // Clear previous results
+            statusDiv.style.display = 'none';
+            resultDiv.style.display = 'none';
+            
+            // Validate inputs
+            if (!interactionId) {
+                showStatus('Please enter an interaction ID', 'error');
+                return;
+            }
+            
+            if (!openaiKey) {
+                showStatus('Please enter your OpenAI API key', 'error');
+                return;
+            }
+            
+            // Disable button
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Generating...';
+            showStatus('Fetching interaction...', 'info');
+            
+            try {
+                // Get the interaction document
+                const interactionRef = doc(db, 'interactions', interactionId);
+                const interactionDoc = await getDoc(interactionRef);
+                
+                if (!interactionDoc.exists()) {
+                    showStatus(`Interaction ${interactionId} not found`, 'error');
+                    generateBtn.disabled = false;
+                    generateBtn.textContent = 'Generate Summary';
+                    return;
+                }
+                
+                const interactionData = interactionDoc.data();
+                
+                // Check if already summarized
+                if (interactionData.summarized === true) {
+                    showResult(interactionData.summary, interactionData.transcript);
+                    showStatus('Interaction already has a summary', 'info');
+                    generateBtn.disabled = false;
+                    generateBtn.textContent = 'Generate Summary';
+                    return;
+                }
+                
+                // Check if it has a transcript
+                if (!interactionData.transcript || interactionData.transcript.trim().length === 0) {
+                    showStatus('Interaction has no transcript', 'error');
+                    generateBtn.disabled = false;
+                    generateBtn.textContent = 'Generate Summary';
+                    return;
+                }
+                
+                showStatus('Generating summary with OpenAI...', 'info');
+                
+                // Generate summary using OpenAI
+                const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${openaiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: 'gpt-3.5-turbo',
+                        messages: [
+                            {
+                                role: 'system',
+                                content: 'You are a helpful assistant that summarizes conversations. Provide a single, concise sentence (one line maximum) summarizing the key point or topic discussed. Keep it brief and focused on the most important information.'
+                            },
+                            {
+                                role: 'user',
+                                content: `Please summarize this conversation in one sentence:\n\n${interactionData.transcript}`
+                            }
+                        ],
+                        max_tokens: 50,
+                        temperature: 0.7
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || 'OpenAI API error');
+                }
+                
+                const completion = await response.json();
+                const firstChoice = completion.choices[0];
+                const summary = (firstChoice && firstChoice.message && firstChoice.message.content) || '';
+                
+                if (!summary) {
+                    throw new Error('Failed to generate summary');
+                }
+                
+                showStatus('Saving summary to Firebase...', 'info');
+                
+                // Update the interaction document
+                await updateDoc(interactionRef, {
+                    summarized: true,
+                    summary: summary.trim(),
+                    summarizedAt: serverTimestamp()
+                });
+                
+                showResult(summary.trim(), interactionData.transcript);
+                showStatus('✅ Summary generated and saved successfully!', 'success');
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Generate Summary';
+            }
+        };
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            statusDiv.style.display = 'block';
+        }
+        
+        function showResult(summary, transcript) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `
+                <h3>Summary:</h3>
+                <p><strong>${summary}</strong></p>
+                <h3>Original Transcript:</h3>
+                <p>${transcript}</p>
+            `;
+            resultDiv.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
+

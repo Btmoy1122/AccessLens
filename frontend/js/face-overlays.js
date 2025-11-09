@@ -140,8 +140,12 @@ function updateOverlayContent(element, faceData) {
     }
     
     if (notesElement) {
-        if (faceData.notes) {
-            notesElement.textContent = faceData.notes;
+        // Priority: memorySummary > latestSummary > notes > nothing
+        // Show combined memory summary if available, otherwise show static notes
+        const displayText = faceData.memorySummary || faceData.latestSummary || faceData.notes;
+        
+        if (displayText) {
+            notesElement.textContent = displayText;
             notesElement.style.display = 'block';
         } else {
             notesElement.style.display = 'none';

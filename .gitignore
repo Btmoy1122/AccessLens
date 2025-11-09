@@ -8,12 +8,25 @@ yarn.lock
 .env.local
 .env.*.local
 
+# API Keys and Secrets (extra protection)
+*.key
+*.pem
+serviceAccountKey.json
+firebase-service-account.json
+*.secret
+secrets/
+scripts/firebase-config.json
+
 # Firebase
 .firebase/
 firebase-debug.log
 firestore-debug.log
 .firebaserc
 firebase.json
+
+# Functions environment variables (local development)
+functions/.env
+functions/.env.local
 
 # Build outputs
 dist/
