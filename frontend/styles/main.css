@@ -116,8 +116,9 @@ html {
     display: none !important;
 }
 
-/* Sidebar Toggle Button */
+/* Sidebar Toggle Button - Hidden */
 .sidebar-toggle {
+    display: none !important;
     position: fixed;
     top: 20px;
     right: 20px;
@@ -138,6 +139,60 @@ html {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+/* Hand Menu Mode Toggle Button */
+.hand-menu-toggle {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    width: 120px;
+    height: 60px;
+    /* Solid background to prevent overlap with content behind */
+    background: rgba(20, 20, 30, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 2px solid rgba(74, 144, 226, 0.4);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    /* Ensure button area is interactive and doesn't show content behind */
+    pointer-events: auto;
+}
+
+.hand-menu-toggle.active {
+    background: rgba(74, 144, 226, 0.6);
+    border-color: rgba(74, 144, 226, 0.8);
+    box-shadow: 0 0 20px rgba(74, 144, 226, 0.5);
+}
+
+.hand-menu-toggle:hover {
+    background: rgba(74, 144, 226, 0.3);
+    transform: scale(1.05);
+}
+
+.hand-menu-toggle:active {
+    transform: scale(0.95);
+}
+
+.hand-menu-toggle .toggle-label {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.hand-menu-toggle .toggle-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
 .sidebar-toggle:hover {
     background: rgba(255, 255, 255, 0.25);
     transform: scale(1.05);
@@ -151,8 +206,9 @@ html {
     line-height: 1;
 }
 
-/* Sidebar - Highly transparent */
+/* Sidebar - Hidden */
 .sidebar {
+    display: none !important;
     position: fixed;
     top: 0;
     right: -525px; /* Hidden by default - 50% wider (350px * 1.5 = 525px) */
@@ -163,7 +219,6 @@ html {
     border-left: 1px solid rgba(255, 255, 255, 0.2);
     z-index: 2000;
     transition: right 0.3s ease;
-    display: flex;
     flex-direction: column;
     box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
     overflow-y: auto;
@@ -337,8 +392,9 @@ html {
     box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
 }
 
-/* Sidebar Overlay (Mobile) - Disabled dimming */
+/* Sidebar Overlay (Mobile) - Hidden */
 .sidebar-overlay {
+    display: none !important;
     position: fixed;
     top: 0;
     left: 0;
@@ -446,16 +502,23 @@ html {
 /* Speech Captions */
 .captions-container {
     position: fixed;
-    bottom: 80px;
+    top: 85%; /* Position below the hand menu, shifted up */
     left: 50%;
     transform: translateX(-50%);
     width: 90%;
     max-width: 800px;
     z-index: 500;
-    pointer-events: none;
+    pointer-events: auto; /* Changed from 'none' to allow dragging */
     display: flex;
     justify-content: center;
     align-items: center;
+    cursor: move; /* Show move cursor */
+    user-select: none; /* Prevent text selection while dragging */
+}
+
+.captions-container.dragging {
+    cursor: grabbing;
+    transition: none; /* Disable transitions while dragging */
 }
 
 .captions-text {
@@ -479,6 +542,7 @@ html {
     transition: opacity 0.3s ease, transform 0.3s ease;
     word-wrap: break-word;
     max-width: 100%;
+    pointer-events: none; /* Prevent text from blocking drag */
 }
 
 .captions-text.show {
@@ -584,7 +648,8 @@ html {
 /* Responsive captions */
 @media (max-width: 768px) {
     .captions-container {
-        bottom: 60px;
+        top: 85%; /* Position below the hand menu on mobile too, shifted up */
+        bottom: auto;
         width: 95%;
         padding: 0 10px;
     }
@@ -926,6 +991,206 @@ button:focus-visible {
     color: #fff;
 }
 
+/* Hand Menu Overlay */
+.hand-menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 500;
+    pointer-events: none;
+}
+
+.hand-menu-quadrilateral {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.quadrilateral-path {
+    fill: rgba(74, 144, 226, 0.15);
+    stroke: rgba(74, 144, 226, 0.6);
+    stroke-width: 0.01;
+    stroke-dasharray: 0.02, 0.02;
+    transition: all 0.2s ease;
+}
+
+.quadrilateral-path.locked {
+    fill: rgba(81, 207, 102, 0.2);
+    stroke: rgba(81, 207, 102, 0.8);
+    stroke-width: 0.015;
+    stroke-dasharray: 0.03, 0.01;
+}
+
+.hand-menu-buttons {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: auto repeat(4, 1fr);
+    gap: 8px;
+    padding: 12px;
+    pointer-events: auto;
+    transform-origin: top left;
+}
+
+.hand-menu-button {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(74, 144, 226, 0.5);
+    border-radius: 8px;
+    color: #222;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    min-height: 44px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hand-menu-button:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: rgba(74, 144, 226, 0.8);
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.hand-menu-button:active {
+    transform: scale(0.95);
+}
+
+.hand-menu-button.highlighted {
+    background: rgba(74, 144, 226, 0.9);
+    border-color: rgba(74, 144, 226, 1);
+    color: #fff;
+    box-shadow: 0 0 20px rgba(74, 144, 226, 0.6);
+}
+
+.hand-menu-button-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.hand-menu-button-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.hand-menu-button.active {
+    background: rgba(74, 144, 226, 0.85);
+    border-color: rgba(74, 144, 226, 0.5);
+    color: #fff;
+}
+
+/* Hand Menu Lock Indicator */
+.hand-menu-lock-indicator {
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    grid-column: 1 / -1; /* Span full width of grid */
+    width: 100%;
+}
+
+.hand-menu-lock-indicator.locked {
+    background: rgba(81, 207, 102, 0.9);
+    border-color: rgba(81, 207, 102, 1);
+    color: #fff;
+    box-shadow: 0 0 15px rgba(81, 207, 102, 0.5);
+}
+
+.hand-menu-lock-indicator.unlocked {
+    background: rgba(74, 144, 226, 0.9);
+    border-color: rgba(74, 144, 226, 1);
+    color: #fff;
+}
+
+/* Hand Menu Unlock Button */
+.hand-menu-unlock-button {
+    background: rgba(255, 193, 7, 0.95);
+    backdrop-filter: blur(10px);
+    border: 3px solid rgba(255, 193, 7, 1);
+    border-radius: 12px;
+    color: #222;
+    padding: 16px 24px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    min-height: 60px;
+    text-align: center;
+    margin-bottom: 12px;
+    width: 100%;
+    grid-column: 1 / -1; /* Span full width of grid */
+}
+
+.hand-menu-unlock-button:hover {
+    background: rgba(255, 193, 7, 1);
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.hand-menu-unlock-button:active {
+    transform: scale(0.95);
+}
+
+.hand-menu-unlock-button.highlighted {
+    background: rgba(255, 152, 0, 1);
+    border-color: rgba(255, 152, 0, 1);
+    box-shadow: 0 0 20px rgba(255, 152, 0, 0.8);
+}
+
+.hand-menu-prompt {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 20px 30px;
+    border-radius: 12px;
+    font-size: 16px;
+    text-align: center;
+    z-index: 501;
+    pointer-events: none;
+    border: 2px solid rgba(74, 144, 226, 0.5);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.hand-menu-prompt.hidden {
+    display: none;
+}
+
 /* Responsive modal */
 @media (max-width: 768px) {
     .modal-content {
@@ -942,6 +1207,22 @@ button:focus-visible {
         font-size: 12px;
         padding: 6px 10px;
         max-width: 150px;
+    }
+    
+    .hand-menu-button {
+        font-size: 12px;
+        padding: 8px 12px;
+        min-height: 40px;
+    }
+    
+    .hand-menu-toggle {
+        width: 100px;
+        height: 50px;
+        font-size: 20px;
+    }
+    
+    .hand-menu-toggle .toggle-label {
+        font-size: 10px;
     }
 }
 

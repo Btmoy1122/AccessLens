@@ -18,6 +18,24 @@ import * as tf from '@tensorflow/tfjs';
 let getClickHandler = null;
 let elementClickRegistry = null;
 
+// Hand menu mode state
+let handMenuModeEnabled = false; // Whether hand menu mode is enabled
+let handMenuQuadrilateral = null; // Current quadrilateral {leftThumb, rightThumb, rightIndex, leftIndex}
+let handMenuOverlay = null; // Hand menu overlay container element
+let handMenuButtons = null; // Hand menu buttons container element
+let handMenuQuadrilateralSVG = null; // SVG element for quadrilateral visualization
+let handMenuButtonElements = []; // Array of button elements in hand menu
+let lastQuadrilateralUpdate = 0; // Timestamp of last quadrilateral update
+const QUADRILATERAL_UPDATE_THROTTLE = 100; // Throttle updates to every 100ms
+
+// Hand menu locking state
+let handMenuLocked = false; // Whether the hand menu is currently locked
+let handMenuLockStartTime = null; // Timestamp when valid quadrilateral detection started
+let handMenuLockThreshold = 2000; // Duration in milliseconds to hold pose before locking (2 seconds)
+let lockedQuadrilateral = null; // Store the locked quadrilateral position
+let handMenuUnlockButton = null; // Unlock button element
+let handMenuLockIndicator = null; // Lock status indicator element
+
 // Configuration constants
 const LANDMARK_BUFFER_SIZE = 30; // Frame buffer for temporal analysis
 const PROCESSING_THROTTLE = 3; // Process every Nth frame for performance
@@ -40,19 +58,20 @@ let displayCallback = null;
 let animationFrameId = null;
 
 // Pinch detection state
-let PINCH_THRESHOLD = 0.05; // Distance threshold for pinch detection (tune as needed)
-const PINCH_DEBOUNCE_FRAMES = 3; // Number of consecutive frames to confirm state change
+let PINCH_THRESHOLD = 0.04; // Distance threshold for pinch detection (lower = more precise)
+const PINCH_DEBOUNCE_FRAMES = 1; // Number of consecutive frames to confirm state change (lower = faster response)
 let pinchStateHistory = []; // History of pinch states for debouncing
 let currentPinchState = false; // Current debounced pinch state
 let pinchStatusElement = null; // DOM element for pinch status display
 
 // Pinch-to-click state
-let pinchToClickEnabled = false; // Whether pinch-to-click is enabled
+let pinchToClickEnabled = true; // Whether pinch-to-click is enabled (default: enabled)
 let lastPinchState = false; // Previous pinch state for detecting transitions
 let pinchOverlayCanvas = null; // Canvas for visual feedback
 let pinchOverlayCtx = null; // Canvas 2D context
 let lastClickTime = 0; // Timestamp of last click to prevent spam
 const CLICK_DEBOUNCE_MS = 300; // Minimum time between clicks (ms)
+const HAND_MENU_CLICK_DEBOUNCE_MS = 50; // Very short debounce for hand menu buttons (ms) - more responsive
 let lastPinchClickLocation = null; // Last location where we triggered a click
 const MIN_PINCH_MOVE_DISTANCE = 0.05; // Minimum normalized distance to trigger new click while pinched
 let pinchLocation = null; // Current pinch location {x, y}
@@ -448,6 +467,11 @@ export async function startDetection() {
     // Initialize pinch overlay canvas for visual feedback
     initializePinchOverlay();
     
+    // Initialize hand menu overlay if mode is enabled
+    if (handMenuModeEnabled) {
+        initializeHandMenuOverlay();
+    }
+    
     // Start processing loop using requestAnimationFrame
     processVideoFrames();
     console.log('Sign language detection started');
@@ -671,6 +695,11 @@ function onHandsResults(results) {
 
     // Extract hand landmarks
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        // Process hand menu mode if enabled
+        if (handMenuModeEnabled) {
+            processHandMenuQuadrilateral(results);
+        }
+        
         // Process each detected hand (use first hand for pinch detection)
         const primaryHand = results.multiHandLandmarks[0];
         processHandLandmarks(primaryHand);
@@ -690,6 +719,11 @@ function onHandsResults(results) {
         // No hands detected - clear pinch state and buffer after delay
         updatePinchStatus(false, false); // Force update to "not pinched"
         pinchStateHistory = []; // Clear debounce history
+        
+        // Hide hand menu if no hands detected
+        if (handMenuModeEnabled) {
+            hideHandMenuOverlay();
+        }
         
         if (landmarkBuffer.length > 0) {
             setTimeout(() => {
@@ -909,6 +943,18 @@ function detectPinch(landmarks) {
                 updatePinchVisualFeedback(pinchX, pinchY);
             }
             
+            // For hand menu, trigger clicks immediately even while debouncing for faster response
+            if (handMenuModeEnabled && pinchToClickEnabled && isPinched && !currentPinchState) {
+                // Pinch is detected but not yet confirmed - trigger click immediately for hand menu
+                // This makes hand menu buttons much more responsive
+                if (!lastPinchState) {
+                    console.log('⚡ Hand menu: Triggering immediate click (before debounce confirmation)');
+                    handlePinchClick(pinchX, pinchY);
+                    lastPinchClickLocation = { x: pinchX, y: pinchY };
+                    lastPinchState = true; // Mark as pinched to prevent duplicate clicks
+                }
+            }
+            
             // Still process middle finger pinch even if index finger state is debouncing
             processMiddleFingerPinch(isMiddlePinch, middleTip, thumbTip);
         }
@@ -919,11 +965,26 @@ function detectPinch(landmarks) {
             // First frame - set initial state
             currentPinchState = isPinched;
             updatePinchStatus(isPinched, true);
+            
+            // For hand menu, trigger clicks immediately on first frame for maximum responsiveness
+            if (handMenuModeEnabled && pinchToClickEnabled && isPinched && !lastPinchState) {
+                console.log('⚡ Hand menu: Triggering immediate click (first frame)');
+                handlePinchClick(pinchX, pinchY);
+                lastPinchClickLocation = { x: pinchX, y: pinchY };
+                lastPinchState = true; // Mark as pinched to prevent duplicate clicks
+            }
         }
     }
     
-    // Update last pinch state
-    lastPinchState = isPinched;
+    // Update last pinch state (but don't override if we already set it for immediate click)
+    if (!handMenuModeEnabled || !pinchToClickEnabled || !isPinched || currentPinchState) {
+        lastPinchState = isPinched;
+    }
+    
+    // Update hand menu button highlighting if in hand menu mode
+    if (handMenuModeEnabled && pinchLocation) {
+        updateHandMenuButtonHighlighting();
+    }
 }
 
 /**
@@ -1961,17 +2022,136 @@ function mapNormalizedToScreen(normalizedX, normalizedY) {
  * @param {number} normalizedY - Normalized Y coordinate (0-1)
  */
 function handlePinchClick(normalizedX, normalizedY) {
-    // Prevent click spam
-    const now = Date.now();
-    if (now - lastClickTime < CLICK_DEBOUNCE_MS) {
-        return;
-    }
-    lastClickTime = now;
-    
     // Map normalized coordinates to screen coordinates
     const screenCoords = mapNormalizedToScreen(normalizedX, normalizedY);
     
     console.log('Pinch click detected at:', screenCoords, 'from normalized:', { x: normalizedX, y: normalizedY });
+    
+    // For hand menu, check if we're over a button first (more accurate)
+    // Use a shorter debounce for hand menu buttons to make them more responsive
+    const now = Date.now();
+    
+    if (handMenuModeEnabled && handMenuButtonElements.length > 0) {
+        // Check unlock button first
+        if (handMenuUnlockButton && handMenuLocked) {
+            const unlockRect = handMenuUnlockButton.getBoundingClientRect();
+            // Increase buffer for easier targeting (10px instead of 5px)
+            const isOverUnlock = (
+                screenCoords.x >= unlockRect.left - 10 &&
+                screenCoords.x <= unlockRect.right + 10 &&
+                screenCoords.y >= unlockRect.top - 10 &&
+                screenCoords.y <= unlockRect.bottom + 10
+            );
+            
+            if (isOverUnlock) {
+                // Check debounce for hand menu buttons
+                if (now - lastClickTime < HAND_MENU_CLICK_DEBOUNCE_MS) {
+                    console.log('⏸️ Hand menu click debounced');
+                    return;
+                }
+                lastClickTime = now;
+                
+                console.log('✅ Pinch click on unlock button');
+                // Trigger immediately for better responsiveness
+                unlockHandMenu();
+                return;
+            }
+        }
+        
+        // Check hand menu buttons - find the closest one
+        let closestButton = null;
+        let closestDistance = Infinity;
+        
+        for (const btn of handMenuButtonElements) {
+            if (!btn.element) continue;
+            
+            const rect = btn.element.getBoundingClientRect();
+            // Increase buffer for easier targeting (10px instead of 5px)
+            const isOverButton = (
+                screenCoords.x >= rect.left - 10 &&
+                screenCoords.x <= rect.right + 10 &&
+                screenCoords.y >= rect.top - 10 &&
+                screenCoords.y <= rect.bottom + 10
+            );
+            
+            if (isOverButton) {
+                // Calculate distance to button center for better accuracy
+                const buttonCenterX = rect.left + rect.width / 2;
+                const buttonCenterY = rect.top + rect.height / 2;
+                const distance = Math.sqrt(
+                    Math.pow(screenCoords.x - buttonCenterX, 2) +
+                    Math.pow(screenCoords.y - buttonCenterY, 2)
+                );
+                
+                // Keep track of closest button
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestButton = btn;
+                }
+            }
+        }
+        
+        if (closestButton) {
+            // Check debounce for hand menu buttons
+            if (now - lastClickTime < HAND_MENU_CLICK_DEBOUNCE_MS) {
+                console.log('⏸️ Hand menu click debounced');
+                return;
+            }
+            lastClickTime = now;
+            
+            console.log('✅ Pinch click on hand menu button:', closestButton.id, 'distance:', closestDistance.toFixed(2));
+            
+            // Highlight the button immediately for visual feedback
+            closestButton.element.classList.add('highlighted');
+            
+            // Trigger click immediately for better responsiveness
+            // Try multiple methods to ensure click works
+            let clickTriggered = false;
+            
+            // Method 1: Direct click on element
+            if (closestButton.element.click) {
+                try {
+                    closestButton.element.click();
+                    clickTriggered = true;
+                } catch (e) {
+                    console.warn('Direct click failed:', e);
+                }
+            }
+            
+            // Method 2: Click on nav item
+            if (!clickTriggered && closestButton.navItem && closestButton.navItem.click) {
+                try {
+                    closestButton.navItem.click();
+                    clickTriggered = true;
+                } catch (e) {
+                    console.warn('Nav item click failed:', e);
+                }
+            }
+            
+            // Method 3: Use click registry
+            if (!clickTriggered && elementClickRegistry && closestButton.id && elementClickRegistry[closestButton.id]) {
+                try {
+                    elementClickRegistry[closestButton.id]();
+                    clickTriggered = true;
+                } catch (e) {
+                    console.warn('Registry click failed:', e);
+                }
+            }
+            
+            // Remove highlight after a short delay
+            setTimeout(() => {
+                closestButton.element.classList.remove('highlighted');
+            }, 200);
+            
+            return;
+        }
+    }
+    
+    // For non-hand-menu clicks, use the regular debounce
+    if (now - lastClickTime < CLICK_DEBOUNCE_MS) {
+        return;
+    }
+    lastClickTime = now;
     
     // Find the element at this screen position
     // Temporarily hide overlay canvas to get the actual element underneath
@@ -2237,6 +2417,785 @@ export function getModelConfig() {
 }
 
 /**
+ * Set hand menu mode enabled/disabled
+ * @param {boolean} enabled - Whether hand menu mode is enabled
+ */
+export function setHandMenuMode(enabled) {
+    handMenuModeEnabled = enabled;
+    
+    if (enabled) {
+        initializeHandMenuOverlay();
+    } else {
+        // Unlock menu when disabling mode
+        if (handMenuLocked) {
+            unlockHandMenu();
+        }
+        hideHandMenuOverlay();
+    }
+    
+    console.log('Hand menu mode:', enabled ? 'enabled' : 'disabled');
+}
+
+/**
+ * Initialize hand menu overlay system
+ */
+function initializeHandMenuOverlay() {
+    // Get or create overlay container
+    handMenuOverlay = document.getElementById('hand-menu-overlay');
+    if (!handMenuOverlay) {
+        console.warn('Hand menu overlay element not found');
+        return;
+    }
+    
+    // Get SVG element for quadrilateral visualization
+    handMenuQuadrilateralSVG = document.getElementById('hand-menu-quadrilateral');
+    if (!handMenuQuadrilateralSVG) {
+        console.warn('Hand menu quadrilateral SVG not found');
+        return;
+    }
+    
+    // Get buttons container
+    handMenuButtons = document.getElementById('hand-menu-buttons');
+    if (!handMenuButtons) {
+        console.warn('Hand menu buttons container not found');
+        return;
+    }
+    
+    // Create menu buttons from sidebar items
+    createHandMenuButtons();
+}
+
+/**
+ * Create hand menu buttons from sidebar items
+ */
+function createHandMenuButtons() {
+    if (!handMenuButtons) {
+        return;
+    }
+    
+    // Clear existing buttons
+    handMenuButtons.innerHTML = '';
+    handMenuButtonElements = [];
+    
+    // Create lock status indicator
+    handMenuLockIndicator = document.createElement('div');
+    handMenuLockIndicator.className = 'hand-menu-lock-indicator';
+    handMenuLockIndicator.id = 'hand-menu-lock-indicator';
+    handMenuLockIndicator.innerHTML = '🔓 Unlocked';
+    updateHandMenuLockIndicator();
+    handMenuButtons.appendChild(handMenuLockIndicator);
+    
+    // Create unlock button (hidden by default, shown when locked)
+    handMenuUnlockButton = document.createElement('button');
+    handMenuUnlockButton.className = 'hand-menu-unlock-button';
+    handMenuUnlockButton.id = 'hand-menu-unlock-button';
+    handMenuUnlockButton.innerHTML = '🔓 Unlock Menu';
+    handMenuUnlockButton.style.display = 'none';
+    
+    // Add click handler for unlock button
+    handMenuUnlockButton.addEventListener('click', () => {
+        unlockHandMenu();
+    });
+    
+    // Register unlock button in click registry for pinch-to-click
+    if (elementClickRegistry) {
+        elementClickRegistry['hand-menu-unlock-button'] = () => {
+            unlockHandMenu();
+        };
+    }
+    
+    handMenuButtons.appendChild(handMenuUnlockButton);
+    
+    // Get all sidebar nav items
+    const sidebarNavItems = document.querySelectorAll('.nav-item');
+    if (!sidebarNavItems || sidebarNavItems.length === 0) {
+        console.warn('No sidebar nav items found');
+        return;
+    }
+    
+    // Create buttons for each nav item
+    sidebarNavItems.forEach((navItem, index) => {
+        // Skip camera selector container
+        if (navItem.closest('.camera-selector-container')) {
+            return;
+        }
+        
+        const button = document.createElement('button');
+        button.className = 'hand-menu-button';
+        button.id = `hand-menu-${navItem.id || `button-${index}`}`;
+        
+        // Copy icon and label from nav item
+        const icon = navItem.querySelector('.nav-icon');
+        const label = navItem.querySelector('.nav-label');
+        
+        if (icon) {
+            const iconSpan = document.createElement('span');
+            iconSpan.className = 'hand-menu-button-icon';
+            iconSpan.textContent = icon.textContent;
+            button.appendChild(iconSpan);
+        }
+        
+        if (label) {
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'hand-menu-button-label';
+            labelSpan.textContent = label.textContent;
+            button.appendChild(labelSpan);
+        }
+        
+        // Determine active state based on button ID and actual feature state
+        // We'll update this properly after creation
+        updateHandMenuButtonActiveState(button, navItem.id);
+        
+        // Add click handler - use the same handler as the original nav item
+        if (navItem.id && elementClickRegistry && elementClickRegistry[navItem.id]) {
+            button.addEventListener('click', () => {
+                elementClickRegistry[navItem.id]();
+            });
+        } else {
+            // Fallback to clicking the original nav item
+            button.addEventListener('click', () => {
+                navItem.click();
+            });
+        }
+        
+        handMenuButtons.appendChild(button);
+        handMenuButtonElements.push({
+            element: button,
+            navItem: navItem,
+            id: navItem.id
+        });
+    });
+    
+    // Update all button active states after creation
+    updateAllHandMenuButtonStates();
+}
+
+/**
+ * Update active state of a hand menu button based on its ID
+ * @param {HTMLElement} button - Button element to update
+ * @param {string} buttonId - ID of the button (e.g., 'toggle-speech', 'toggle-sign')
+ */
+function updateHandMenuButtonActiveState(button, buttonId) {
+    if (!button || !buttonId) {
+        return;
+    }
+    
+    let isActive = false;
+    
+    // Map button IDs to their corresponding state
+    if (buttonId === 'toggle-speech') {
+        // Check if speech is enabled (we need to access appState, but it's in main.js)
+        // We'll use the nav item's active class as a fallback, but prefer to update via main.js
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-sign') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-scene') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-face') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-flip-camera') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-pinch-click') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    }
+    
+    // Update button active state
+    if (isActive) {
+        button.classList.add('active');
+    } else {
+        button.classList.remove('active');
+    }
+}
+
+/**
+ * Update all hand menu button active states
+ * This should be called whenever feature states change
+ */
+export function updateAllHandMenuButtonStates() {
+    if (!handMenuButtonElements || handMenuButtonElements.length === 0) {
+        return;
+    }
+    
+    handMenuButtonElements.forEach(btn => {
+        if (btn.element && btn.id) {
+            // Get the corresponding sidebar nav item to check its active state
+            const navItem = document.getElementById(btn.id);
+            if (navItem) {
+                const isActive = navItem.classList.contains('active');
+                if (isActive) {
+                    btn.element.classList.add('active');
+                } else {
+                    btn.element.classList.remove('active');
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Process hand menu quadrilateral from both hands
+ * @param {Object} results - MediaPipe hands results
+ */
+function processHandMenuQuadrilateral(results) {
+    // If menu is locked, keep it visible but don't update position
+    if (handMenuLocked && lockedQuadrilateral) {
+        // Update overlay with locked position to ensure it stays visible
+        updateHandMenuOverlay(lockedQuadrilateral);
+        return;
+    }
+    
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 2) {
+        // Need both hands for quadrilateral
+        // Reset lock timer if hands are not detected
+        handMenuLockStartTime = null;
+        hideHandMenuOverlay();
+        return;
+    }
+    
+    // Throttle updates
+    const now = Date.now();
+    if (now - lastQuadrilateralUpdate < QUADRILATERAL_UPDATE_THROTTLE) {
+        return;
+    }
+    lastQuadrilateralUpdate = now;
+    
+    // Get landmarks and handedness for both hands
+    const landmarks = results.multiHandLandmarks;
+    const handedness = results.multiHandedness || [];
+    
+    // Identify left and right hands
+    let leftHand = null;
+    let rightHand = null;
+    
+    for (let i = 0; i < landmarks.length; i++) {
+        const hand = landmarks[i];
+        const handInfo = handedness[i] || {};
+        const handLabel = handInfo.displayName || handInfo.categoryName || '';
+        
+        if (handLabel.toLowerCase().includes('left')) {
+            leftHand = hand;
+        } else if (handLabel.toLowerCase().includes('right')) {
+            rightHand = hand;
+        }
+    }
+    
+    // If we can't determine handedness, use position-based detection
+    // (left hand typically has lower x coordinate in normalized space)
+    if (!leftHand || !rightHand) {
+        if (landmarks.length >= 2) {
+            // Use first hand as left, second as right (or vice versa based on x position)
+            const hand0 = landmarks[0];
+            const hand1 = landmarks[1];
+            
+            // Get wrist position (landmark 0) to determine which is left/right
+            const hand0X = hand0[0].x;
+            const hand1X = hand1[0].x;
+            
+            if (hand0X < hand1X) {
+                leftHand = hand0;
+                rightHand = hand1;
+            } else {
+                leftHand = hand1;
+                rightHand = hand0;
+            }
+        } else {
+            hideHandMenuOverlay();
+            return;
+        }
+    }
+    
+    // Extract thumb tip (#4) and index tip (#8) from both hands
+    const THUMB_TIP = 4;
+    const INDEX_TIP = 8;
+    
+    const leftThumb = leftHand[THUMB_TIP];
+    const leftIndex = leftHand[INDEX_TIP];
+    const rightThumb = rightHand[THUMB_TIP];
+    const rightIndex = rightHand[INDEX_TIP];
+    
+    // Validate that all required landmarks are present and have valid coordinates
+    if (!leftThumb || !leftIndex || !rightThumb || !rightIndex) {
+        hideHandMenuOverlay();
+        return;
+    }
+    
+    // Create quadrilateral: [leftThumb, rightThumb, rightIndex, leftIndex]
+    // Order: bottom-left, bottom-right, top-right, top-left (counter-clockwise)
+    const rawQuadrilateral = {
+        leftThumb: { x: leftThumb.x, y: leftThumb.y },
+        rightThumb: { x: rightThumb.x, y: rightThumb.y },
+        rightIndex: { x: rightIndex.x, y: rightIndex.y },
+        leftIndex: { x: leftIndex.x, y: leftIndex.y }
+    };
+    
+    // Convert to rectangle (autocorrect shape to ensure opposite sides are same length)
+    const quadrilateral = convertQuadrilateralToRectangle(rawQuadrilateral);
+    
+    handMenuQuadrilateral = quadrilateral;
+    
+    // Check for automatic locking
+    checkHandMenuLock(quadrilateral);
+    
+    // Update overlay with rectangle
+    updateHandMenuOverlay(quadrilateral);
+}
+
+/**
+ * Convert a quadrilateral to a rectangle by autocorrecting its shape
+ * Ensures opposite sides are the same length
+ * @param {Object} quad - Quadrilateral with leftThumb, rightThumb, rightIndex, leftIndex
+ * @returns {Object} Rectangle with corrected coordinates
+ */
+function convertQuadrilateralToRectangle(quad) {
+    // Calculate center point of the quadrilateral
+    const centerX = (quad.leftThumb.x + quad.rightThumb.x + quad.rightIndex.x + quad.leftIndex.x) / 4;
+    const centerY = (quad.leftThumb.y + quad.rightThumb.y + quad.rightIndex.y + quad.leftIndex.y) / 4;
+    
+    // Calculate average width (average of top and bottom edges)
+    const bottomWidth = Math.abs(quad.rightThumb.x - quad.leftThumb.x);
+    const topWidth = Math.abs(quad.rightIndex.x - quad.leftIndex.x);
+    const avgWidth = (bottomWidth + topWidth) / 2;
+    
+    // Calculate average height (average of left and right edges)
+    const leftHeight = Math.abs(quad.leftIndex.y - quad.leftThumb.y);
+    const rightHeight = Math.abs(quad.rightIndex.y - quad.rightThumb.y);
+    const avgHeight = (leftHeight + rightHeight) / 2;
+    
+    // Calculate half-width and half-height
+    const halfWidth = avgWidth / 2;
+    const halfHeight = avgHeight / 2;
+    
+    // Create a perfect rectangle centered at the calculated center
+    // Order: bottom-left, bottom-right, top-right, top-left
+    const rectangle = {
+        leftThumb: {
+            x: centerX - halfWidth,
+            y: centerY + halfHeight
+        },
+        rightThumb: {
+            x: centerX + halfWidth,
+            y: centerY + halfHeight
+        },
+        rightIndex: {
+            x: centerX + halfWidth,
+            y: centerY - halfHeight
+        },
+        leftIndex: {
+            x: centerX - halfWidth,
+            y: centerY - halfHeight
+        }
+    };
+    
+    // Ensure coordinates are within valid range [0, 1]
+    rectangle.leftThumb.x = Math.max(0, Math.min(1, rectangle.leftThumb.x));
+    rectangle.leftThumb.y = Math.max(0, Math.min(1, rectangle.leftThumb.y));
+    rectangle.rightThumb.x = Math.max(0, Math.min(1, rectangle.rightThumb.x));
+    rectangle.rightThumb.y = Math.max(0, Math.min(1, rectangle.rightThumb.y));
+    rectangle.rightIndex.x = Math.max(0, Math.min(1, rectangle.rightIndex.x));
+    rectangle.rightIndex.y = Math.max(0, Math.min(1, rectangle.rightIndex.y));
+    rectangle.leftIndex.x = Math.max(0, Math.min(1, rectangle.leftIndex.x));
+    rectangle.leftIndex.y = Math.max(0, Math.min(1, rectangle.leftIndex.y));
+    
+    return rectangle;
+}
+
+/**
+ * Check if hand menu should be automatically locked
+ * @param {Object} quadrilateral - Current quadrilateral
+ */
+function checkHandMenuLock(quadrilateral) {
+    const now = Date.now();
+    
+    // If we have a valid quadrilateral, start or continue tracking lock timer
+    if (quadrilateral) {
+        if (handMenuLockStartTime === null) {
+            // Start tracking lock timer
+            handMenuLockStartTime = now;
+        } else {
+            // Check if threshold has been met
+            const elapsed = now - handMenuLockStartTime;
+            if (elapsed >= handMenuLockThreshold && !handMenuLocked) {
+                // Lock the menu
+                lockHandMenu(quadrilateral);
+            }
+        }
+    } else {
+        // Reset timer if quadrilateral is invalid
+        handMenuLockStartTime = null;
+    }
+}
+
+/**
+ * Lock the hand menu at current position
+ * @param {Object} quadrilateral - Quadrilateral to lock at
+ */
+function lockHandMenu(quadrilateral) {
+    handMenuLocked = true;
+    // Store the rectangle version of the quadrilateral when locking
+    // (quadrilateral should already be a rectangle from convertQuadrilateralToRectangle)
+    lockedQuadrilateral = quadrilateral;
+    handMenuLockStartTime = null; // Reset timer
+    
+    // Update visual indicators
+    updateHandMenuLockIndicator();
+    
+    // Show unlock button
+    showHandMenuUnlockButton();
+    
+    console.log('Hand menu locked at position:', quadrilateral);
+}
+
+/**
+ * Unlock the hand menu
+ */
+export function unlockHandMenu() {
+    handMenuLocked = false;
+    lockedQuadrilateral = null;
+    handMenuLockStartTime = null; // Reset timer
+    
+    // Update visual indicators
+    updateHandMenuLockIndicator();
+    
+    // Hide unlock button
+    hideHandMenuUnlockButton();
+    
+    console.log('Hand menu unlocked');
+}
+
+/**
+ * Set hand menu to default position in center of screen
+ * This creates a default quadrilateral centered on screen and locks it
+ */
+export function setHandMenuToDefaultPosition() {
+    if (!handMenuModeEnabled) {
+        console.warn('Hand menu mode not enabled, cannot set default position');
+        return;
+    }
+    
+    // Create default quadrilateral in center of screen (shifted up a bit)
+    // Normalized coordinates (0-1): center is at 0.5, 0.45 (shifted up)
+    // Default size: 60% of screen width and 70% of screen height to show all buttons
+    const centerX = 0.5;
+    const centerY = 0.45; // Shifted up from 0.5 to 0.45
+    const width = 0.6;  // 60% of screen width
+    const height = 0.7; // 70% of screen height to accommodate all buttons
+    
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    
+    // Create rectangle quadrilateral
+    // Order: bottom-left, bottom-right, top-right, top-left
+    const defaultQuadrilateral = {
+        leftThumb: {
+            x: centerX - halfWidth,
+            y: centerY + halfHeight
+        },
+        rightThumb: {
+            x: centerX + halfWidth,
+            y: centerY + halfHeight
+        },
+        rightIndex: {
+            x: centerX + halfWidth,
+            y: centerY - halfHeight
+        },
+        leftIndex: {
+            x: centerX - halfWidth,
+            y: centerY - halfHeight
+        }
+    };
+    
+    // Lock the menu at this position
+    lockHandMenu(defaultQuadrilateral);
+    
+    // Update overlay to show the menu
+    updateHandMenuOverlay(defaultQuadrilateral);
+    
+    console.log('Hand menu set to default position in center');
+}
+
+/**
+ * Update hand menu lock indicator
+ */
+function updateHandMenuLockIndicator() {
+    if (!handMenuLockIndicator) {
+        return;
+    }
+    
+    if (handMenuLocked) {
+        handMenuLockIndicator.classList.add('locked');
+        handMenuLockIndicator.classList.remove('unlocked');
+        handMenuLockIndicator.innerHTML = '🔒 Locked';
+    } else {
+        handMenuLockIndicator.classList.add('unlocked');
+        handMenuLockIndicator.classList.remove('locked');
+        handMenuLockIndicator.innerHTML = '🔓 Unlocked';
+    }
+}
+
+/**
+ * Show unlock button
+ */
+function showHandMenuUnlockButton() {
+    if (handMenuUnlockButton) {
+        handMenuUnlockButton.style.display = 'flex';
+    }
+}
+
+/**
+ * Hide unlock button
+ */
+function hideHandMenuUnlockButton() {
+    if (handMenuUnlockButton) {
+        handMenuUnlockButton.style.display = 'none';
+    }
+}
+
+/**
+ * Update hand menu overlay with quadrilateral
+ * @param {Object} quadrilateral - Quadrilateral with {leftThumb, rightThumb, rightIndex, leftIndex}
+ */
+function updateHandMenuOverlay(quadrilateral) {
+    if (!handMenuOverlay || !handMenuQuadrilateralSVG || !handMenuButtons) {
+        return;
+    }
+    
+    // If menu is locked, use locked quadrilateral instead of current one
+    const quadToUse = handMenuLocked && lockedQuadrilateral ? lockedQuadrilateral : quadrilateral;
+    
+    // Show overlay
+    handMenuOverlay.style.display = 'block';
+    
+    // Hide prompt when quadrilateral is detected
+    hideHandMenuPrompt();
+    
+    // Update SVG quadrilateral visualization
+    const path = document.getElementById('quadrilateral-path');
+    if (path) {
+        // Create points string for SVG polygon
+        // Order: leftThumb (bottom-left), rightThumb (bottom-right), rightIndex (top-right), leftIndex (top-left)
+        const points = [
+            `${quadToUse.leftThumb.x},${quadToUse.leftThumb.y}`,      // Bottom-left
+            `${quadToUse.rightThumb.x},${quadToUse.rightThumb.y}`,    // Bottom-right
+            `${quadToUse.rightIndex.x},${quadToUse.rightIndex.y}`,    // Top-right
+            `${quadToUse.leftIndex.x},${quadToUse.leftIndex.y}`       // Top-left
+        ].join(' ');
+        
+        path.setAttribute('points', points);
+        
+        // Update visual style based on lock status
+        if (handMenuLocked) {
+            path.classList.add('locked');
+        } else {
+            path.classList.remove('locked');
+        }
+    }
+    
+    // Calculate transform to map buttons to quadrilateral
+    // Use CSS clip-path or transform to warp buttons into quadrilateral
+    mapButtonsToQuadrilateral(quadToUse);
+    
+    // Update button highlighting based on pinch location
+    updateHandMenuButtonHighlighting();
+}
+
+/**
+ * Map menu buttons to quadrilateral using CSS transforms
+ * @param {Object} quadrilateral - Quadrilateral coordinates
+ */
+function mapButtonsToQuadrilateral(quadrilateral) {
+    if (!handMenuButtons || !videoElement) {
+        return;
+    }
+    
+    // Get video element dimensions and position
+    const videoRect = videoElement.getBoundingClientRect();
+    const videoWidth = videoElement.videoWidth || videoRect.width;
+    const videoHeight = videoElement.videoHeight || videoRect.height;
+    
+    // Convert normalized coordinates to screen coordinates
+    // Account for object-fit: cover if needed
+    const screenCoords = {
+        leftThumb: mapNormalizedToScreen(quadrilateral.leftThumb.x, quadrilateral.leftThumb.y),
+        rightThumb: mapNormalizedToScreen(quadrilateral.rightThumb.x, quadrilateral.rightThumb.y),
+        rightIndex: mapNormalizedToScreen(quadrilateral.rightIndex.x, quadrilateral.rightIndex.y),
+        leftIndex: mapNormalizedToScreen(quadrilateral.leftIndex.x, quadrilateral.leftIndex.y)
+    };
+    
+    // Calculate bounding box of quadrilateral
+    const minX = Math.min(screenCoords.leftThumb.x, screenCoords.rightThumb.x, screenCoords.rightIndex.x, screenCoords.leftIndex.x);
+    const maxX = Math.max(screenCoords.leftThumb.x, screenCoords.rightThumb.x, screenCoords.rightIndex.x, screenCoords.leftIndex.x);
+    const minY = Math.min(screenCoords.leftThumb.y, screenCoords.rightThumb.y, screenCoords.rightIndex.y, screenCoords.leftIndex.y);
+    const maxY = Math.max(screenCoords.leftThumb.y, screenCoords.rightThumb.y, screenCoords.rightIndex.y, screenCoords.leftIndex.y);
+    
+    const quadWidth = maxX - minX;
+    const quadHeight = maxY - minY;
+    
+    // Position and scale the buttons container to fit the quadrilateral
+    handMenuButtons.style.left = `${minX}px`;
+    handMenuButtons.style.top = `${minY}px`;
+    handMenuButtons.style.width = `${quadWidth}px`;
+    handMenuButtons.style.height = `${quadHeight}px`;
+    
+    // Use CSS clip-path to create quadrilateral shape
+    // clip-path: polygon(x1% y1%, x2% y2%, x3% y3%, x4% y4%)
+    const clipPath = `polygon(
+        ${((screenCoords.leftThumb.x - minX) / quadWidth) * 100}% ${((screenCoords.leftThumb.y - minY) / quadHeight) * 100}%,
+        ${((screenCoords.rightThumb.x - minX) / quadWidth) * 100}% ${((screenCoords.rightThumb.y - minY) / quadHeight) * 100}%,
+        ${((screenCoords.rightIndex.x - minX) / quadWidth) * 100}% ${((screenCoords.rightIndex.y - minY) / quadHeight) * 100}%,
+        ${((screenCoords.leftIndex.x - minX) / quadWidth) * 100}% ${((screenCoords.leftIndex.y - minY) / quadHeight) * 100}%
+    )`;
+    
+    handMenuButtons.style.clipPath = clipPath;
+    handMenuButtons.style.webkitClipPath = clipPath;
+}
+
+/**
+ * Update hand menu button highlighting based on pinch location
+ */
+function updateHandMenuButtonHighlighting() {
+    if (!handMenuModeEnabled || !pinchLocation) {
+        // Clear all highlights
+        handMenuButtonElements.forEach(btn => {
+            if (btn.element) {
+                btn.element.classList.remove('highlighted');
+            }
+        });
+        // Also clear unlock button highlight
+        if (handMenuUnlockButton) {
+            handMenuUnlockButton.classList.remove('highlighted');
+        }
+        return;
+    }
+    
+    // Map pinch location to screen coordinates
+    const screenCoords = mapNormalizedToScreen(pinchLocation.x, pinchLocation.y);
+    
+    // Check if pinch is over unlock button first
+    if (handMenuUnlockButton && handMenuLocked) {
+        const unlockRect = handMenuUnlockButton.getBoundingClientRect();
+        // Increase padding for easier targeting (10px buffer for better accuracy)
+        const isOverUnlock = (
+            screenCoords.x >= unlockRect.left - 10 &&
+            screenCoords.x <= unlockRect.right + 10 &&
+            screenCoords.y >= unlockRect.top - 10 &&
+            screenCoords.y <= unlockRect.bottom + 10
+        );
+        
+        if (isOverUnlock && currentPinchState) {
+            handMenuUnlockButton.classList.add('highlighted');
+        } else {
+            handMenuUnlockButton.classList.remove('highlighted');
+        }
+    }
+    
+    // Check which button the pinch is over
+    if (handMenuButtonElements.length > 0) {
+        let highlightedButton = null;
+        
+        handMenuButtonElements.forEach(btn => {
+            if (!btn.element) {
+                return;
+            }
+            
+            const rect = btn.element.getBoundingClientRect();
+            // Increase padding for easier targeting (10px buffer for better accuracy)
+            const isOverButton = (
+                screenCoords.x >= rect.left - 10 &&
+                screenCoords.x <= rect.right + 10 &&
+                screenCoords.y >= rect.top - 10 &&
+                screenCoords.y <= rect.bottom + 10
+            );
+            
+            if (isOverButton && currentPinchState) {
+                // Only highlight the first button found (closest to center if overlapping)
+                if (!highlightedButton) {
+                    btn.element.classList.add('highlighted');
+                    highlightedButton = btn;
+                } else {
+                    // Check which button center is closer to pinch location
+                    const currentCenterX = rect.left + rect.width / 2;
+                    const currentCenterY = rect.top + rect.height / 2;
+                    const currentDist = Math.sqrt(
+                        Math.pow(screenCoords.x - currentCenterX, 2) +
+                        Math.pow(screenCoords.y - currentCenterY, 2)
+                    );
+                    
+                    const highlightedRect = highlightedButton.element.getBoundingClientRect();
+                    const highlightedCenterX = highlightedRect.left + highlightedRect.width / 2;
+                    const highlightedCenterY = highlightedRect.top + highlightedRect.height / 2;
+                    const highlightedDist = Math.sqrt(
+                        Math.pow(screenCoords.x - highlightedCenterX, 2) +
+                        Math.pow(screenCoords.y - highlightedCenterY, 2)
+                    );
+                    
+                    // If current button is closer, switch highlight
+                    if (currentDist < highlightedDist) {
+                        highlightedButton.element.classList.remove('highlighted');
+                        btn.element.classList.add('highlighted');
+                        highlightedButton = btn;
+                    } else {
+                        btn.element.classList.remove('highlighted');
+                    }
+                }
+            } else {
+                btn.element.classList.remove('highlighted');
+            }
+        });
+    }
+}
+
+/**
+ * Hide hand menu overlay
+ */
+function hideHandMenuOverlay() {
+    // Don't hide if menu is locked (keep it visible)
+    if (handMenuLocked) {
+        return;
+    }
+    
+    if (handMenuOverlay) {
+        handMenuOverlay.style.display = 'none';
+    }
+    handMenuQuadrilateral = null;
+    
+    // Reset lock timer
+    handMenuLockStartTime = null;
+    
+    // Show prompt when hands are not detected
+    showHandMenuPrompt();
+}
+
+/**
+ * Show hand menu prompt
+ */
+function showHandMenuPrompt() {
+    if (!handMenuModeEnabled) {
+        return;
+    }
+    
+    const prompt = document.getElementById('hand-menu-prompt');
+    if (prompt) {
+        prompt.classList.remove('hidden');
+    }
+}
+
+/**
+ * Hide hand menu prompt
+ */
+function hideHandMenuPrompt() {
+    const prompt = document.getElementById('hand-menu-prompt');
+    if (prompt) {
+        prompt.classList.add('hidden');
+    }
+}
+
+/**
  * Cleanup resources
  */
 export function cleanup() {
@@ -2251,6 +3210,15 @@ export function cleanup() {
         aslModel.dispose();
         aslModel = null;
     }
+    
+    // Cleanup hand menu
+    if (handMenuLocked) {
+        unlockHandMenu();
+    }
+    hideHandMenuOverlay();
+    handMenuModeEnabled = false;
+    handMenuLockStartTime = null;
+    lockedQuadrilateral = null;
     
     isInitialized = false;
     console.log('Sign language recognition cleaned up');

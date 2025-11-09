@@ -16,8 +16,55 @@
  */
 
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import '@tensorflow/tfjs';
+import * as tf from '@tensorflow/tfjs';
 import { getAllActiveFaces } from './face-recognition.js';
+
+// Force CPU backend on Mac to avoid WebGL context issues
+// This is a workaround for "Failed to create WebGL canvas context" errors
+// Must be done before any TensorFlow operations
+const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+
+// Disable WebGL backend on Mac before TensorFlow.js initializes
+if (isMac) {
+    // Try to disable WebGL backend registration entirely
+    // This prevents TensorFlow from even trying to use WebGL
+    try {
+        // Set environment flag to disable WebGL
+        if (typeof process !== 'undefined' && process.env) {
+            process.env.TFJS_FORCE_CPU = '1';
+        }
+        
+        // Override WebGL backend registration if possible
+        const originalRegisterBackend = tf.registerBackend;
+        if (originalRegisterBackend) {
+            tf.registerBackend = function(name, factory, priority) {
+                // Skip WebGL backend registration on Mac
+                if (name === 'webgl' || name === 'webgpu') {
+                    console.log('Skipping WebGL backend registration on Mac');
+                    return false;
+                }
+                return originalRegisterBackend.call(this, name, factory, priority);
+            };
+        }
+    } catch (err) {
+        console.warn('Could not disable WebGL backend registration:', err);
+    }
+    
+    // Register CPU backend and set it as default before any operations
+    // This prevents TensorFlow from trying to use WebGL
+    (async () => {
+        try {
+            // Wait for TensorFlow to be ready
+            await tf.ready();
+            // Set CPU backend immediately
+            await tf.setBackend('cpu');
+            await tf.ready();
+            console.log('TensorFlow.js using CPU backend (Mac compatibility)');
+        } catch (err) {
+            console.warn('Could not set CPU backend initially:', err);
+        }
+    })();
+}
 
 // Configuration constants
 const DETECTION_INTERVAL_MS = 4000; // Run detection every 4 seconds
@@ -30,6 +77,8 @@ let isDescribing = false;
 let speechSynthesis = null;
 let videoElement = null;
 let detectionTimeoutId = null;
+let detectionCanvas = null;
+let detectionCtx = null;
 
 /**
  * Initialize scene description module.
@@ -47,6 +96,31 @@ export async function initSceneDescription() {
         
         speechSynthesis = window.speechSynthesis;
         
+        // On Mac, ensure CPU backend is set before loading model
+        // This is critical to avoid WebGL context errors
+        if (isMac) {
+            try {
+                // Wait for TensorFlow to be ready first
+                await tf.ready();
+                // Set CPU backend
+                await tf.setBackend('cpu');
+                // Wait for backend to be ready
+                await tf.ready();
+                console.log('TensorFlow.js using CPU backend (Mac compatibility)');
+                
+                // Verify backend is actually set to CPU
+                const currentBackend = tf.getBackend();
+                if (currentBackend !== 'cpu') {
+                    console.warn(`Backend is ${currentBackend}, not CPU. This may cause WebGL errors on Mac.`);
+                }
+            } catch (backendError) {
+                console.warn('Could not set CPU backend, will try default:', backendError);
+            }
+        } else {
+            // On non-Mac, wait for TensorFlow to be ready
+            await tf.ready();
+        }
+        
         // Load COCO-SSD model
         console.log('Loading COCO-SSD model...');
         model = await cocoSsd.load();
@@ -54,7 +128,28 @@ export async function initSceneDescription() {
         console.log('Scene description initialized successfully');
         return true;
     } catch (error) {
+        const errorMsg = error.message || error.toString() || '';
         console.error('Error initializing scene description:', error);
+        
+        // If WebGL error, try to switch to CPU and reload
+        if (errorMsg.includes('WebGL') || errorMsg.includes('canvas context')) {
+            console.warn('WebGL error detected, trying CPU backend...');
+            try {
+                // Force CPU backend
+                await tf.setBackend('cpu');
+                await tf.ready();
+                console.log('Switched to CPU backend, retrying model load...');
+                model = await cocoSsd.load();
+                console.log('Scene description initialized successfully with CPU backend');
+                return true;
+            } catch (retryError) {
+                console.error('Failed to load model even with CPU backend:', retryError);
+                // Don't show alert - just return false silently
+                return false;
+            }
+        }
+        
+        // For other errors, also don't show alerts
         return false;
     }
 }
@@ -68,6 +163,22 @@ export async function initSceneDescription() {
 export function setVideoElement(video) {
     if (video && video instanceof HTMLVideoElement) {
         videoElement = video;
+        
+        // Create a canvas for processing video frames
+        // This helps avoid WebGL context issues on Mac
+        if (!detectionCanvas) {
+            detectionCanvas = document.createElement('canvas');
+            detectionCanvas.style.display = 'none';
+            detectionCanvas.style.position = 'absolute';
+            detectionCanvas.style.top = '0';
+            detectionCanvas.style.left = '0';
+            document.body.appendChild(detectionCanvas);
+            detectionCtx = detectionCanvas.getContext('2d', { 
+                willReadFrequently: true,
+                alpha: false 
+            });
+        }
+        
         console.log('Video element set for scene description');
     } else {
         console.warn('Invalid video element provided to setVideoElement');
@@ -154,8 +265,67 @@ async function detectLoop() {
     }
     
     try {
+        // Ensure CPU backend is set on Mac before detection
+        if (navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
+            const currentBackend = tf.getBackend();
+            if (currentBackend !== 'cpu') {
+                try {
+                    await tf.setBackend('cpu');
+                    await tf.ready();
+                    console.log('Switched to CPU backend for detection (Mac compatibility)');
+                } catch (backendError) {
+                    console.warn('Could not switch to CPU backend:', backendError);
+                }
+            }
+        }
+        
+        // Use canvas instead of video element directly to avoid WebGL context issues
+        // This is especially important on Mac
+        let imageSource = videoElement;
+        
+        if (detectionCanvas && detectionCtx && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
+            // Set canvas dimensions to match video
+            if (detectionCanvas.width !== videoElement.videoWidth || 
+                detectionCanvas.height !== videoElement.videoHeight) {
+                detectionCanvas.width = videoElement.videoWidth;
+                detectionCanvas.height = videoElement.videoHeight;
+            }
+            
+            // Draw video frame to canvas
+            try {
+                detectionCtx.drawImage(videoElement, 0, 0, detectionCanvas.width, detectionCanvas.height);
+                imageSource = detectionCanvas;
+            } catch (drawError) {
+                // If drawing fails, fall back to using video element directly
+                console.warn('Could not draw video to canvas, using video element directly:', drawError);
+                imageSource = videoElement;
+            }
+        }
+        
         // Detect objects in the current video frame
-        const predictions = await model.detect(videoElement);
+        // Wrap in try-catch to handle WebGL errors gracefully
+        let predictions;
+        try {
+            predictions = await model.detect(imageSource);
+        } catch (detectError) {
+            // If detection fails with WebGL error, try to switch to CPU and retry once
+            const errorMsg = detectError.message || detectError.toString() || '';
+            if (errorMsg.includes('WebGL') || errorMsg.includes('canvas context')) {
+                console.warn('WebGL error during detection, switching to CPU backend...');
+                try {
+                    await tf.setBackend('cpu');
+                    await tf.ready();
+                    // Retry detection with CPU backend
+                    predictions = await model.detect(imageSource);
+                } catch (retryError) {
+                    console.error('Detection failed even with CPU backend:', retryError);
+                    // Continue loop without predictions
+                    predictions = [];
+                }
+            } else {
+                throw detectError; // Re-throw if it's not a WebGL error
+            }
+        }
         
         // Generate description from predictions
         const description = generateDescription(predictions);
@@ -165,7 +335,22 @@ async function detectLoop() {
             narrateDescription(description);
         }
     } catch (error) {
-        console.error('Error during object detection:', error);
+        // Check if it's a WebGL context error
+        const errorMessage = error.message || error.toString() || '';
+        if (errorMessage.includes('WebGL') || errorMessage.includes('canvas context')) {
+            console.warn('WebGL context error detected. This is a known issue on Mac. Trying CPU backend...');
+            // Try to force CPU backend
+            try {
+                await tf.setBackend('cpu');
+                await tf.ready();
+                console.log('Switched to CPU backend after error');
+                // Don't retry detection in this loop iteration to avoid infinite loop
+            } catch (backendError) {
+                console.error('Could not switch to CPU backend:', backendError);
+            }
+        } else {
+            console.error('Error during object detection:', error);
+        }
         // Continue the loop even if detection fails
     }
     
