@@ -126,8 +126,43 @@
         <div id="pinch-type-text" class="pinch-type-text"></div>
     </div>
     
+    <!-- Face Overlays Container -->
+    <div id="face-overlays" class="face-overlays"></div>
+    
+    <!-- Face Registration Modal -->
+    <div id="face-registration-modal" class="face-registration-modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Register New Face</h3>
+                <button class="modal-close" id="face-modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">A new face has been detected. Please provide information to register this person.</p>
+                <div class="form-group">
+                    <label for="face-name">Name *</label>
+                    <input type="text" id="face-name" placeholder="Enter person's name" required>
+                </div>
+                <div class="form-group">
+                    <label for="face-notes">Notes (Optional)</label>
+                    <textarea id="face-notes" placeholder="e.g., Friend from work, Volunteer, etc." rows="3"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button id="face-register-btn" class="btn-primary">Register Face</button>
+                    <button id="face-skip-btn" class="btn-secondary">Skip</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <!-- Scripts -->
     <script type="module" src="/js/main.js"></script>
+    <!-- Fallback: Show message if JavaScript fails to load -->
+    <noscript>
+        <div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: red; color: white; padding: 20px; z-index: 99999;">
+            <h2>JavaScript Required</h2>
+            <p>AccessLens requires JavaScript to run. Please enable JavaScript in your browser.</p>
+        </div>
+    </noscript>
 </body>
 </html>
 

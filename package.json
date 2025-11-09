@@ -22,6 +22,7 @@
     "@mediapipe/hands": "^0.4.1675469240",
     "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs": "^4.22.0",
+    "@vladmandic/face-api": "^1.7.15",
     "firebase": "^10.7.1"
   },
   "devDependencies": {

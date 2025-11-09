@@ -5,7 +5,18 @@
  */
 
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import { 
+    getFirestore, 
+    collection, 
+    addDoc, 
+    getDocs, 
+    query, 
+    where, 
+    updateDoc, 
+    deleteDoc, 
+    doc,
+    serverTimestamp 
+} from 'firebase/firestore';
 import firebaseConfig from '../config/firebase-config.js';
 
 // Initialize Firebase
@@ -14,21 +25,30 @@ const db = getFirestore(app);
 
 /**
  * Add a new face to the database
+ * 
+ * @param {Object} faceData - Face data object
+ * @param {string} faceData.name - Name of the person
+ * @param {string} faceData.notes - Additional notes about the person
+ * @param {Float32Array|Array} faceData.embedding - Face embedding (128-dimensional vector)
+ * @param {string} [faceData.userId] - Optional user ID for multi-user support
+ * @returns {Promise<string>} Document ID of the added face
  */
 export async function addFace(faceData) {
     try {
-        // TODO: Add face data to Firestore
-        // const docRef = await addDoc(collection(db, 'faces'), {
-        //     name: faceData.name,
-        //     notes: faceData.notes,
-        //     embedding: faceData.embedding,
-        //     createdAt: new Date(),
-        //     userId: faceData.userId || 'default'
-        // });
-        // return docRef.id;
+        // Convert Float32Array to regular array for Firestore storage
+        const embeddingArray = Array.from(faceData.embedding);
         
-        console.log('Face added:', faceData.name);
-        return null; // Placeholder
+        const docRef = await addDoc(collection(db, 'faces'), {
+            name: faceData.name,
+            notes: faceData.notes || '',
+            embedding: embeddingArray,
+            userId: faceData.userId || 'default',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+        
+        console.log('Face added successfully:', faceData.name, 'ID:', docRef.id);
+        return docRef.id;
     } catch (error) {
         console.error('Error adding face:', error);
         throw error;
@@ -37,19 +57,30 @@ export async function addFace(faceData) {
 
 /**
  * Get all faces from the database
+ * 
+ * @returns {Promise<Array>} Array of face objects with id, name, notes, embedding, etc.
  */
 export async function getAllFaces() {
     try {
-        // TODO: Fetch all faces from Firestore
-        // const querySnapshot = await getDocs(collection(db, 'faces'));
-        // const faces = [];
-        // querySnapshot.forEach((doc) => {
-        //     faces.push({ id: doc.id, ...doc.data() });
-        // });
-        // return faces;
+        const querySnapshot = await getDocs(collection(db, 'faces'));
+        const faces = [];
         
-        console.log('Faces fetched');
-        return []; // Placeholder
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            // Convert array back to Float32Array for face-api.js comparison
+            faces.push({
+                id: doc.id,
+                name: data.name,
+                notes: data.notes || '',
+                embedding: new Float32Array(data.embedding),
+                userId: data.userId || 'default',
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt
+            });
+        });
+        
+        console.log(`Fetched ${faces.length} faces from database`);
+        return faces;
     } catch (error) {
         console.error('Error fetching faces:', error);
         throw error;
@@ -58,20 +89,31 @@ export async function getAllFaces() {
 
 /**
  * Get faces for a specific user
+ * 
+ * @param {string} userId - User ID to filter faces
+ * @returns {Promise<Array>} Array of face objects for the specified user
  */
 export async function getFacesByUser(userId) {
     try {
-        // TODO: Fetch faces filtered by userId
-        // const q = query(collection(db, 'faces'), where('userId', '==', userId));
-        // const querySnapshot = await getDocs(q);
-        // const faces = [];
-        // querySnapshot.forEach((doc) => {
-        //     faces.push({ id: doc.id, ...doc.data() });
-        // });
-        // return faces;
+        const q = query(collection(db, 'faces'), where('userId', '==', userId));
+        const querySnapshot = await getDocs(q);
+        const faces = [];
         
-        console.log('User faces fetched:', userId);
-        return []; // Placeholder
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            faces.push({
+                id: doc.id,
+                name: data.name,
+                notes: data.notes || '',
+                embedding: new Float32Array(data.embedding),
+                userId: data.userId || 'default',
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt
+            });
+        });
+        
+        console.log(`Fetched ${faces.length} faces for user:`, userId);
+        return faces;
     } catch (error) {
         console.error('Error fetching user faces:', error);
         throw error;
@@ -80,13 +122,25 @@ export async function getFacesByUser(userId) {
 
 /**
  * Update face data
+ * 
+ * @param {string} faceId - Document ID of the face to update
+ * @param {Object} updates - Object with fields to update
+ * @returns {Promise<void>}
  */
 export async function updateFace(faceId, updates) {
     try {
-        // TODO: Update face document in Firestore
-        // await updateDoc(doc(db, 'faces', faceId), updates);
+        const updateData = {
+            ...updates,
+            updatedAt: serverTimestamp()
+        };
         
-        console.log('Face updated:', faceId);
+        // Convert embedding if provided
+        if (updateData.embedding && updateData.embedding instanceof Float32Array) {
+            updateData.embedding = Array.from(updateData.embedding);
+        }
+        
+        await updateDoc(doc(db, 'faces', faceId), updateData);
+        console.log('Face updated successfully:', faceId);
     } catch (error) {
         console.error('Error updating face:', error);
         throw error;
@@ -95,13 +149,14 @@ export async function updateFace(faceId, updates) {
 
 /**
  * Delete face from database
+ * 
+ * @param {string} faceId - Document ID of the face to delete
+ * @returns {Promise<void>}
  */
 export async function deleteFace(faceId) {
     try {
-        // TODO: Delete face document from Firestore
-        // await deleteDoc(doc(db, 'faces', faceId));
-        
-        console.log('Face deleted:', faceId);
+        await deleteDoc(doc(db, 'faces', faceId));
+        console.log('Face deleted successfully:', faceId);
     } catch (error) {
         console.error('Error deleting face:', error);
         throw error;
