@@ -506,10 +506,17 @@ html {
     width: 90%;
     max-width: 800px;
     z-index: 500;
-    pointer-events: none;
+    pointer-events: auto; /* Changed from 'none' to allow dragging */
     display: flex;
     justify-content: center;
     align-items: center;
+    cursor: move; /* Show move cursor */
+    user-select: none; /* Prevent text selection while dragging */
+}
+
+.captions-container.dragging {
+    cursor: grabbing;
+    transition: none; /* Disable transitions while dragging */
 }
 
 .captions-text {
@@ -533,6 +540,7 @@ html {
     transition: opacity 0.3s ease, transform 0.3s ease;
     word-wrap: break-word;
     max-width: 100%;
+    pointer-events: none; /* Prevent text from blocking drag */
 }
 
 .captions-text.show {
