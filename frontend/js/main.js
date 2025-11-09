@@ -93,7 +93,6 @@ let currentPendingDetection = null; // Stores detection data for pending registr
  * Initialize the application
  */
 document.addEventListener('DOMContentLoaded', () => {
-<<<<<<< HEAD
     try {
         console.log('AccessLens initialized');
         
@@ -122,48 +121,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     console.warn('Suppressed WebGL promise rejection (Mac compatibility):', errorMsg);
                     event.preventDefault(); // Prevent default error handling
                 }
-=======
-    console.log('AccessLens initialized');
-    
-    // Ensure body has black background
-    document.body.style.backgroundColor = '#000';
-    document.documentElement.style.backgroundColor = '#000';
-    
-    // Get DOM elements
-    initializeDOMElements();
-    
-    // Initialize sidebar
-    initializeSidebar();
-    
-    // Initialize draggable captions
-    initializeDraggableCaptions();
-    
-    // Initialize camera first (most important)
-    initializeCamera();
-    
-    // Initialize feature toggles
-    initializeFeatureToggles();
-    
-    // Initialize ML modules (speech-to-text, scene description, etc.)
-    initializeMLModules();
-    
-    // AR scene initialization deferred - A-Frame not loaded yet
-    // initializeARScene();
-    
-    // Debug: Log video element state
-    setTimeout(() => {
-        const video = document.getElementById('camera-video');
-        if (video) {
-            console.log('Video element state:', {
-                display: window.getComputedStyle(video).display,
-                visibility: window.getComputedStyle(video).visibility,
-                opacity: window.getComputedStyle(video).opacity,
-                srcObject: !!video.srcObject,
-                paused: video.paused,
-                readyState: video.readyState,
-                videoWidth: video.videoWidth,
-                videoHeight: video.videoHeight
->>>>>>> eabba1bc8f44cc662762cc8de2055975adf09fa9
             });
         }
         
@@ -845,10 +802,18 @@ function toggleFeature(featureName) {
     
     // Handle feature-specific logic
     if (featureName === 'speech') {
+        // Voice commands always work - only captions are toggled
         if (appState.features.speech.enabled) {
             startSpeechRecognition();
         } else {
+            // Only stop captions, not recognition (voice commands need it)
             stopSpeechRecognition();
+        }
+        // Ensure voice commands are always running
+        // Recognition continues in background for voice commands even when captions are off
+        if (appState.cameraReady) {
+            // Ensure recognition is running for voice commands
+            startListening();
         }
     } else if (featureName === 'sign') {
         // Hand Detection is always enabled - prevent disabling
@@ -968,9 +933,12 @@ function initializeSpeechToText() {
     }
     
     // Initialize voice commands
+    console.log('Initializing voice commands...');
     initVoiceCommands();
+    console.log('Voice commands initialized');
     
     // Set up voice command callbacks
+    console.log('Setting up voice command callbacks...');
     setCommandCallbacks({
         openMenu: () => {
             console.log('Voice command: Open menu');
@@ -1023,14 +991,19 @@ function initializeSpeechToText() {
             console.log('Voice command: Close hand menu');
             closeHandMenu();
         },
+        fixHandMenu: () => {
+            console.log('Voice command: Fix/Reset hand menu');
+            fixHandMenu();
+        },
         showHelp: () => {
             console.log('Voice command: Show help');
             // Show help dialog or list available commands
             const commands = [
                 'Open menu', 'Close menu', 'Toggle menu',
-                'Enable speech', 'Enable sign language', 
+                'Enable speech', 'Enable sign language',
                 'Enable scene description', 'Enable face recognition',
-                'Enable hand menu', 'Mirror camera', 'Flip camera'
+                'Enable hand menu', 'Fix menu', 'Reset menu', // Updated help
+                'Mirror camera', 'Flip camera' // Updated help
             ];
             alert(`Available Voice Commands:\n\n${commands.join('\n')}`);
         }
@@ -1038,11 +1011,15 @@ function initializeSpeechToText() {
     
     // Set up voice command processor to receive speech results
     // This allows commands to work even when captions are off
+    console.log('Setting up voice command processor...');
     setVoiceCommandProcessor((text, isFinal) => {
+        console.log('Voice command processor called:', text, 'isFinal:', isFinal);
         if (isFinal && text && text.trim()) {
+            console.log('Processing voice command:', text);
             processVoiceCommand(text);
         }
     });
+    console.log('Voice command processor set up');
     
     // Set up caption callback (only for displaying captions)
     setCaptionCallback((text, isInterim) => {
@@ -1961,6 +1938,7 @@ function toggleHandMenuMode() {
  * Open hand menu at default position in center of screen
  */
 function openHandMenuAtDefaultPosition() {
+    console.log('openHandMenuAtDefaultPosition called');
     // Enable hand menu mode if not already enabled
     if (!appState.handMenuMode) {
         appState.handMenuMode = true;
@@ -1977,9 +1955,11 @@ function openHandMenuAtDefaultPosition() {
     
     // Set hand menu to default position (centered)
     if (typeof setHandMenuToDefaultPosition === 'function') {
+        console.log('Calling setHandMenuToDefaultPosition...');
         setHandMenuToDefaultPosition();
+        console.log('Hand menu set to default position');
     } else {
-        console.warn('setHandMenuToDefaultPosition function not available');
+        console.error('setHandMenuToDefaultPosition function not available!');
     }
 }
 
@@ -2005,6 +1985,38 @@ function closeHandMenu() {
     // }
     
     console.log('Hand menu closed');
+}
+
+/**
+ * Fix/Reset hand menu to default position
+ * Only resets if menu is already open, doesn't open it if closed
+ */
+function fixHandMenu() {
+    // Only fix menu if it's already open/enabled
+    if (!appState.handMenuMode) {
+        console.log('Hand menu is not open - fix menu only works when menu is already open');
+        return;
+    }
+    
+    // Check if menu overlay is visible
+    const handMenuOverlay = document.getElementById('hand-menu-overlay');
+    if (handMenuOverlay && handMenuOverlay.style.display === 'none') {
+        console.log('Hand menu overlay is not visible - fix menu only works when menu is visible');
+        return;
+    }
+    
+    // Unlock the hand menu first if it's locked
+    if (typeof unlockHandMenu === 'function') {
+        unlockHandMenu();
+    }
+    
+    // Reset hand menu to default position (centered)
+    if (typeof setHandMenuToDefaultPosition === 'function') {
+        setHandMenuToDefaultPosition();
+        console.log('Hand menu reset to default position');
+    } else {
+        console.warn('setHandMenuToDefaultPosition function not available');
+    }
 }
 
 /**

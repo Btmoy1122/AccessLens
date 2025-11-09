@@ -88,6 +88,11 @@ const COMMAND_PATTERNS = {
     'hand': 'toggleHandMenu',
     'close hand menu': 'closeHandMenu',
     'hide hand menu': 'closeHandMenu',
+    'fix menu': 'fixHandMenu',
+    'reset menu': 'fixHandMenu',
+    'reset hand menu': 'fixHandMenu',
+    'fix hand menu': 'fixHandMenu',
+    'restore menu': 'fixHandMenu',
     
     // Help commands
     'help': 'showHelp',

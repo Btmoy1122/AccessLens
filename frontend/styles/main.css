@@ -116,8 +116,9 @@ html {
     display: none !important;
 }
 
-/* Sidebar Toggle Button */
+/* Sidebar Toggle Button - Hidden */
 .sidebar-toggle {
+    display: none !important;
     position: fixed;
     top: 20px;
     right: 20px;
@@ -205,8 +206,9 @@ html {
     line-height: 1;
 }
 
-/* Sidebar - Highly transparent */
+/* Sidebar - Hidden */
 .sidebar {
+    display: none !important;
     position: fixed;
     top: 0;
     right: -525px; /* Hidden by default - 50% wider (350px * 1.5 = 525px) */
@@ -217,7 +219,6 @@ html {
     border-left: 1px solid rgba(255, 255, 255, 0.2);
     z-index: 2000;
     transition: right 0.3s ease;
-    display: flex;
     flex-direction: column;
     box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
     overflow-y: auto;
@@ -391,8 +392,9 @@ html {
     box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
 }
 
-/* Sidebar Overlay (Mobile) - Disabled dimming */
+/* Sidebar Overlay (Mobile) - Hidden */
 .sidebar-overlay {
+    display: none !important;
     position: fixed;
     top: 0;
     left: 0;
@@ -500,7 +502,7 @@ html {
 /* Speech Captions */
 .captions-container {
     position: fixed;
-    bottom: 80px;
+    top: 85%; /* Position below the hand menu, shifted up */
     left: 50%;
     transform: translateX(-50%);
     width: 90%;
@@ -646,7 +648,8 @@ html {
 /* Responsive captions */
 @media (max-width: 768px) {
     .captions-container {
-        bottom: 60px;
+        top: 85%; /* Position below the hand menu on mobile too, shifted up */
+        bottom: auto;
         width: 95%;
         padding: 0 10px;
     }

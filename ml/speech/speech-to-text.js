@@ -121,8 +121,9 @@ export function stopListening() {
  * Handle speech recognition start
  */
 function handleSpeechStart() {
-    console.log('Speech recognition started successfully');
-    if (captionCallback) {
+    console.log('Speech recognition started successfully (voice commands always active)');
+    // Only show "Listening..." caption if speech feature is enabled
+    if (captionCallback && appState?.features?.speech?.enabled) {
         captionCallback('Listening...', false);
     }
 }
@@ -161,7 +162,10 @@ function handleSpeechResult(event) {
         
         // Process voice commands from final transcript
         if (processVoiceCommand) {
+            console.log('Processing voice command:', currentTranscript);
             processVoiceCommand(currentTranscript, true);
+        } else {
+            console.warn('Voice command processor not set!');
         }
         
         // Clear caption after 5 seconds of silence
@@ -189,11 +193,11 @@ function displayCaption(text, isInterim) {
 }
 
 /**
- * Handle speech recognition errors
+ * Handle speech recognition error
  */
 function handleSpeechError(event) {
     console.error('Speech recognition error:', event.error);
-    
+
     let errorMessage = '';
     switch (event.error) {
         case 'no-speech':
@@ -214,19 +218,34 @@ function handleSpeechError(event) {
         default:
             errorMessage = `Speech recognition error: ${event.error}`;
     }
-    
+
     if (errorMessage && captionCallback) {
         captionCallback(errorMessage, true);
     }
-    
-    // Try to restart if it's a recoverable error
+
+    // Always try to restart for voice commands (voice commands must always work)
+    // Only skip restart for permission errors
     if (event.error !== 'not-allowed' && event.error !== 'aborted') {
         setTimeout(() => {
-            if (isListening && recognition) {
+            if (recognition && !isListening) {
                 try {
                     recognition.start();
+                    isListening = true;
+                    console.log('Speech recognition restarted after error (voice commands always active)');
                 } catch (e) {
                     console.error('Failed to restart recognition:', e);
+                    // Retry after a longer delay
+                    setTimeout(() => {
+                        if (recognition && !isListening) {
+                            try {
+                                recognition.start();
+                                isListening = true;
+                                console.log('Speech recognition restarted after error retry');
+                            } catch (retryError) {
+                                console.error('Failed to restart recognition after retry:', retryError);
+                            }
+                        }
+                    }, 2000);
                 }
             }
         }, 1000);
@@ -235,33 +254,62 @@ function handleSpeechError(event) {
 
 /**
  * Handle speech recognition end
+ * Always auto-restart for voice commands (voice commands must always work)
  */
 function handleSpeechEnd() {
     isListening = false;
+    console.log('Speech recognition ended - auto-restarting for voice commands');
     
-    // Auto-restart if we're supposed to be listening
-    // This handles cases where recognition stops unexpectedly
-    if (appState?.features?.speech?.enabled) {
-        setTimeout(() => {
-            if (appState?.features?.speech?.enabled && !isListening) {
-                try {
-                    recognition.start();
-                } catch (e) {
+    // Always auto-restart for voice commands (voice commands must always work)
+    // This ensures voice commands are always available regardless of caption settings
+    setTimeout(() => {
+        if (recognition && !isListening) {
+            try {
+                recognition.start();
+                isListening = true;
+                console.log('Speech recognition auto-restarted for voice commands');
+            } catch (e) {
+                // Recognition might already be starting
+                if (e.name !== 'InvalidStateError') {
                     console.error('Failed to restart recognition after end:', e);
+                    // Retry after a longer delay
+                    setTimeout(() => {
+                        if (recognition && !isListening) {
+                            try {
+                                recognition.start();
+                                isListening = true;
+                                console.log('Speech recognition restarted after retry');
+                            } catch (retryError) {
+                                console.error('Failed to restart recognition after retry:', retryError);
+                            }
+                        }
+                    }, 1000);
                 }
             }
-        }, 100);
-    }
+        }
+    }, 100);
 }
 
 /**
  * Change recognition language
+ * @param {string} lang - Language code (e.g., 'en-US', 'es-ES', 'fr-FR', 'zh-CN', 'ja-JP')
  */
 export function setLanguage(lang) {
     if (recognition) {
         recognition.lang = lang;
         console.log('Speech recognition language set to:', lang);
     }
+}
+
+/**
+ * Get current recognition language
+ * @returns {string} Current language code
+ */
+export function getLanguage() {
+    if (recognition) {
+        return recognition.lang || 'en-US';
+    }
+    return 'en-US';
 }
 
 /**
@@ -283,3 +331,4 @@ let appState = null;
 export function setAppState(state) {
     appState = state;
 }
+

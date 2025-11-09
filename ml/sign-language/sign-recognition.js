@@ -59,7 +59,7 @@ let animationFrameId = null;
 
 // Pinch detection state
 let PINCH_THRESHOLD = 0.04; // Distance threshold for pinch detection (lower = more precise)
-const PINCH_DEBOUNCE_FRAMES = 2; // Number of consecutive frames to confirm state change (lower = faster response)
+const PINCH_DEBOUNCE_FRAMES = 1; // Number of consecutive frames to confirm state change (lower = faster response)
 let pinchStateHistory = []; // History of pinch states for debouncing
 let currentPinchState = false; // Current debounced pinch state
 let pinchStatusElement = null; // DOM element for pinch status display
@@ -71,6 +71,7 @@ let pinchOverlayCanvas = null; // Canvas for visual feedback
 let pinchOverlayCtx = null; // Canvas 2D context
 let lastClickTime = 0; // Timestamp of last click to prevent spam
 const CLICK_DEBOUNCE_MS = 300; // Minimum time between clicks (ms)
+const HAND_MENU_CLICK_DEBOUNCE_MS = 50; // Very short debounce for hand menu buttons (ms) - more responsive
 let lastPinchClickLocation = null; // Last location where we triggered a click
 const MIN_PINCH_MOVE_DISTANCE = 0.05; // Minimum normalized distance to trigger new click while pinched
 let pinchLocation = null; // Current pinch location {x, y}
@@ -942,6 +943,18 @@ function detectPinch(landmarks) {
                 updatePinchVisualFeedback(pinchX, pinchY);
             }
             
+            // For hand menu, trigger clicks immediately even while debouncing for faster response
+            if (handMenuModeEnabled && pinchToClickEnabled && isPinched && !currentPinchState) {
+                // Pinch is detected but not yet confirmed - trigger click immediately for hand menu
+                // This makes hand menu buttons much more responsive
+                if (!lastPinchState) {
+                    console.log('⚡ Hand menu: Triggering immediate click (before debounce confirmation)');
+                    handlePinchClick(pinchX, pinchY);
+                    lastPinchClickLocation = { x: pinchX, y: pinchY };
+                    lastPinchState = true; // Mark as pinched to prevent duplicate clicks
+                }
+            }
+            
             // Still process middle finger pinch even if index finger state is debouncing
             processMiddleFingerPinch(isMiddlePinch, middleTip, thumbTip);
         }
@@ -952,11 +965,21 @@ function detectPinch(landmarks) {
             // First frame - set initial state
             currentPinchState = isPinched;
             updatePinchStatus(isPinched, true);
+            
+            // For hand menu, trigger clicks immediately on first frame for maximum responsiveness
+            if (handMenuModeEnabled && pinchToClickEnabled && isPinched && !lastPinchState) {
+                console.log('⚡ Hand menu: Triggering immediate click (first frame)');
+                handlePinchClick(pinchX, pinchY);
+                lastPinchClickLocation = { x: pinchX, y: pinchY };
+                lastPinchState = true; // Mark as pinched to prevent duplicate clicks
+            }
         }
     }
     
-    // Update last pinch state
-    lastPinchState = isPinched;
+    // Update last pinch state (but don't override if we already set it for immediate click)
+    if (!handMenuModeEnabled || !pinchToClickEnabled || !isPinched || currentPinchState) {
+        lastPinchState = isPinched;
+    }
     
     // Update hand menu button highlighting if in hand menu mode
     if (handMenuModeEnabled && pinchLocation) {
@@ -1999,63 +2022,136 @@ function mapNormalizedToScreen(normalizedX, normalizedY) {
  * @param {number} normalizedY - Normalized Y coordinate (0-1)
  */
 function handlePinchClick(normalizedX, normalizedY) {
-    // Prevent click spam
-    const now = Date.now();
-    if (now - lastClickTime < CLICK_DEBOUNCE_MS) {
-        return;
-    }
-    lastClickTime = now;
-    
     // Map normalized coordinates to screen coordinates
     const screenCoords = mapNormalizedToScreen(normalizedX, normalizedY);
     
     console.log('Pinch click detected at:', screenCoords, 'from normalized:', { x: normalizedX, y: normalizedY });
     
     // For hand menu, check if we're over a button first (more accurate)
+    // Use a shorter debounce for hand menu buttons to make them more responsive
+    const now = Date.now();
+    
     if (handMenuModeEnabled && handMenuButtonElements.length > 0) {
         // Check unlock button first
         if (handMenuUnlockButton && handMenuLocked) {
             const unlockRect = handMenuUnlockButton.getBoundingClientRect();
+            // Increase buffer for easier targeting (10px instead of 5px)
             const isOverUnlock = (
-                screenCoords.x >= unlockRect.left - 5 &&
-                screenCoords.x <= unlockRect.right + 5 &&
-                screenCoords.y >= unlockRect.top - 5 &&
-                screenCoords.y <= unlockRect.bottom + 5
+                screenCoords.x >= unlockRect.left - 10 &&
+                screenCoords.x <= unlockRect.right + 10 &&
+                screenCoords.y >= unlockRect.top - 10 &&
+                screenCoords.y <= unlockRect.bottom + 10
             );
             
             if (isOverUnlock) {
+                // Check debounce for hand menu buttons
+                if (now - lastClickTime < HAND_MENU_CLICK_DEBOUNCE_MS) {
+                    console.log('⏸️ Hand menu click debounced');
+                    return;
+                }
+                lastClickTime = now;
+                
                 console.log('✅ Pinch click on unlock button');
+                // Trigger immediately for better responsiveness
                 unlockHandMenu();
                 return;
             }
         }
         
-        // Check hand menu buttons
+        // Check hand menu buttons - find the closest one
+        let closestButton = null;
+        let closestDistance = Infinity;
+        
         for (const btn of handMenuButtonElements) {
             if (!btn.element) continue;
             
             const rect = btn.element.getBoundingClientRect();
+            // Increase buffer for easier targeting (10px instead of 5px)
             const isOverButton = (
-                screenCoords.x >= rect.left - 5 &&
-                screenCoords.x <= rect.right + 5 &&
-                screenCoords.y >= rect.top - 5 &&
-                screenCoords.y <= rect.bottom + 5
+                screenCoords.x >= rect.left - 10 &&
+                screenCoords.x <= rect.right + 10 &&
+                screenCoords.y >= rect.top - 10 &&
+                screenCoords.y <= rect.bottom + 10
             );
             
             if (isOverButton) {
-                console.log('✅ Pinch click on hand menu button:', btn.id);
-                // Trigger click on the button directly
-                if (btn.element.click) {
-                    btn.element.click();
-                } else if (btn.navItem && btn.navItem.click) {
-                    btn.navItem.click();
-                } else if (elementClickRegistry && btn.id && elementClickRegistry[btn.id]) {
-                    elementClickRegistry[btn.id]();
+                // Calculate distance to button center for better accuracy
+                const buttonCenterX = rect.left + rect.width / 2;
+                const buttonCenterY = rect.top + rect.height / 2;
+                const distance = Math.sqrt(
+                    Math.pow(screenCoords.x - buttonCenterX, 2) +
+                    Math.pow(screenCoords.y - buttonCenterY, 2)
+                );
+                
+                // Keep track of closest button
+                if (distance < closestDistance) {
+                    closestDistance = distance;
+                    closestButton = btn;
                 }
-                return;
             }
         }
+        
+        if (closestButton) {
+            // Check debounce for hand menu buttons
+            if (now - lastClickTime < HAND_MENU_CLICK_DEBOUNCE_MS) {
+                console.log('⏸️ Hand menu click debounced');
+                return;
+            }
+            lastClickTime = now;
+            
+            console.log('✅ Pinch click on hand menu button:', closestButton.id, 'distance:', closestDistance.toFixed(2));
+            
+            // Highlight the button immediately for visual feedback
+            closestButton.element.classList.add('highlighted');
+            
+            // Trigger click immediately for better responsiveness
+            // Try multiple methods to ensure click works
+            let clickTriggered = false;
+            
+            // Method 1: Direct click on element
+            if (closestButton.element.click) {
+                try {
+                    closestButton.element.click();
+                    clickTriggered = true;
+                } catch (e) {
+                    console.warn('Direct click failed:', e);
+                }
+            }
+            
+            // Method 2: Click on nav item
+            if (!clickTriggered && closestButton.navItem && closestButton.navItem.click) {
+                try {
+                    closestButton.navItem.click();
+                    clickTriggered = true;
+                } catch (e) {
+                    console.warn('Nav item click failed:', e);
+                }
+            }
+            
+            // Method 3: Use click registry
+            if (!clickTriggered && elementClickRegistry && closestButton.id && elementClickRegistry[closestButton.id]) {
+                try {
+                    elementClickRegistry[closestButton.id]();
+                    clickTriggered = true;
+                } catch (e) {
+                    console.warn('Registry click failed:', e);
+                }
+            }
+            
+            // Remove highlight after a short delay
+            setTimeout(() => {
+                closestButton.element.classList.remove('highlighted');
+            }, 200);
+            
+            return;
+        }
     }
+    
+    // For non-hand-menu clicks, use the regular debounce
+    if (now - lastClickTime < CLICK_DEBOUNCE_MS) {
+        return;
+    }
+    lastClickTime = now;
     
     // Find the element at this screen position
     // Temporarily hide overlay canvas to get the actual element underneath
@@ -2782,11 +2878,11 @@ export function setHandMenuToDefaultPosition() {
         return;
     }
     
-    // Create default quadrilateral in center of screen
-    // Normalized coordinates (0-1): center is at 0.5, 0.5
+    // Create default quadrilateral in center of screen (shifted up a bit)
+    // Normalized coordinates (0-1): center is at 0.5, 0.45 (shifted up)
     // Default size: 60% of screen width and 70% of screen height to show all buttons
     const centerX = 0.5;
-    const centerY = 0.5;
+    const centerY = 0.45; // Shifted up from 0.5 to 0.45
     const width = 0.6;  // 60% of screen width
     const height = 0.7; // 70% of screen height to accommodate all buttons
     
@@ -2983,12 +3079,12 @@ function updateHandMenuButtonHighlighting() {
     // Check if pinch is over unlock button first
     if (handMenuUnlockButton && handMenuLocked) {
         const unlockRect = handMenuUnlockButton.getBoundingClientRect();
-        // Add small padding for easier targeting (5px buffer)
+        // Increase padding for easier targeting (10px buffer for better accuracy)
         const isOverUnlock = (
-            screenCoords.x >= unlockRect.left - 5 &&
-            screenCoords.x <= unlockRect.right + 5 &&
-            screenCoords.y >= unlockRect.top - 5 &&
-            screenCoords.y <= unlockRect.bottom + 5
+            screenCoords.x >= unlockRect.left - 10 &&
+            screenCoords.x <= unlockRect.right + 10 &&
+            screenCoords.y >= unlockRect.top - 10 &&
+            screenCoords.y <= unlockRect.bottom + 10
         );
         
         if (isOverUnlock && currentPinchState) {
@@ -3008,12 +3104,12 @@ function updateHandMenuButtonHighlighting() {
             }
             
             const rect = btn.element.getBoundingClientRect();
-            // Add small padding for easier targeting (5px buffer)
+            // Increase padding for easier targeting (10px buffer for better accuracy)
             const isOverButton = (
-                screenCoords.x >= rect.left - 5 &&
-                screenCoords.x <= rect.right + 5 &&
-                screenCoords.y >= rect.top - 5 &&
-                screenCoords.y <= rect.bottom + 5
+                screenCoords.x >= rect.left - 10 &&
+                screenCoords.x <= rect.right + 10 &&
+                screenCoords.y >= rect.top - 10 &&
+                screenCoords.y <= rect.bottom + 10
             );
             
             if (isOverButton && currentPinchState) {
