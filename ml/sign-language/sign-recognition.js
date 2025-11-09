@@ -33,6 +33,7 @@ let handMenuLocked = false; // Whether the hand menu is currently locked
 let handMenuLockStartTime = null; // Timestamp when valid quadrilateral detection started
 let handMenuLockThreshold = 2000; // Duration in milliseconds to hold pose before locking (2 seconds)
 let lockedQuadrilateral = null; // Store the locked quadrilateral position
+let handMenuButtonsVisible = false; // Track if buttons are currently visible (to prevent re-animation)
 let handMenuUnlockButton = null; // Unlock button element
 let handMenuLockIndicator = null; // Lock status indicator element
 
@@ -2568,6 +2569,9 @@ function createHandMenuButtons() {
     
     // Update all button active states after creation
     updateAllHandMenuButtonStates();
+    
+    // Initially hide buttons (they'll show when menu is locked)
+    hideHandMenuButtons();
 }
 
 /**
@@ -2848,6 +2852,30 @@ function lockHandMenu(quadrilateral) {
     // Show unlock button
     showHandMenuUnlockButton();
     
+    // Hide outline immediately
+    const path = document.getElementById('quadrilateral-path');
+    if (path) {
+        path.style.display = 'none'; // Hide outline when locked
+    }
+    
+    // Position buttons first (without animation to prevent jitter)
+    if (handMenuButtons && videoElement) {
+        // Reset visibility flag so animation can run
+        handMenuButtonsVisible = false;
+        
+        // Position the container
+        mapButtonsToQuadrilateral(quadrilateral);
+        
+        // Wait for positioning to stabilize, then animate buttons in
+        // Use double requestAnimationFrame to ensure layout is complete
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                // Now show buttons with smooth pop-in animation
+                showHandMenuButtonsWithAnimation();
+            });
+        });
+    }
+    
     console.log('Hand menu locked at position:', quadrilateral);
 }
 
@@ -2864,6 +2892,14 @@ export function unlockHandMenu() {
     
     // Hide unlock button
     hideHandMenuUnlockButton();
+    
+    // Hide buttons and show outline again (if menu is still visible)
+    hideHandMenuButtons();
+    handMenuButtonsVisible = false; // Reset visibility flag
+    const path = document.getElementById('quadrilateral-path');
+    if (path) {
+        path.style.display = 'block'; // Show outline again
+    }
     
     console.log('Hand menu unlocked');
 }
@@ -2988,20 +3024,34 @@ function updateHandMenuOverlay(quadrilateral) {
         
         path.setAttribute('points', points);
         
-        // Update visual style based on lock status
+        // Show outline only when NOT locked (during countdown)
+        // Hide outline when locked
         if (handMenuLocked) {
             path.classList.add('locked');
+            path.style.display = 'none'; // Hide outline when locked
         } else {
             path.classList.remove('locked');
+            path.style.display = 'block'; // Show outline during countdown
         }
     }
     
-    // Calculate transform to map buttons to quadrilateral
-    // Use CSS clip-path or transform to warp buttons into quadrilateral
-    mapButtonsToQuadrilateral(quadToUse);
-    
-    // Update button highlighting based on pinch location
-    updateHandMenuButtonHighlighting();
+    // If menu is locked, buttons are already positioned and animated in lockHandMenu
+    // Just ensure they stay visible and update highlighting
+    if (handMenuLocked) {
+        // Menu is locked - position is fixed, update position silently
+        mapButtonsToQuadrilateral(quadToUse);
+        // Only show buttons if they're not already visible (prevents re-animation)
+        if (!handMenuButtonsVisible) {
+            showHandMenuButtonsWithAnimation();
+        }
+        // Update button highlighting based on pinch location
+        updateHandMenuButtonHighlighting();
+    } else {
+        // Menu is not locked (during countdown) - update position and hide buttons
+        mapButtonsToQuadrilateral(quadToUse);
+        hideHandMenuButtons();
+        handMenuButtonsVisible = false; // Reset visibility flag
+    }
 }
 
 /**
@@ -3011,6 +3061,14 @@ function updateHandMenuOverlay(quadrilateral) {
 function mapButtonsToQuadrilateral(quadrilateral) {
     if (!handMenuButtons || !videoElement) {
         return;
+    }
+    
+    // Temporarily disable transitions on container to prevent jitter during positioning
+    const containerHasTransition = handMenuButtons.style.transition;
+    if (handMenuLocked) {
+        // When locked, we want smooth transitions for the container position
+        // But we'll apply positioning first without transition, then enable it
+        handMenuButtons.style.transition = 'none';
     }
     
     // Get video element dimensions and position
@@ -3053,6 +3111,127 @@ function mapButtonsToQuadrilateral(quadrilateral) {
     
     handMenuButtons.style.clipPath = clipPath;
     handMenuButtons.style.webkitClipPath = clipPath;
+    
+    // Force a reflow to apply positioning immediately
+    void handMenuButtons.offsetHeight;
+    
+    // When locked, keep transitions disabled to maintain stable position
+    // When not locked, also disable transitions to prevent jitter during tracking
+    handMenuButtons.style.transition = 'none';
+}
+
+/**
+ * Show hand menu buttons with pop-in animation
+ * Buttons appear in order with staggered delays
+ */
+function showHandMenuButtonsWithAnimation() {
+    if (!handMenuButtons || handMenuButtonsVisible) {
+        // Buttons are already visible, don't re-animate
+        return;
+    }
+    
+    // Mark buttons as visible to prevent re-animation
+    handMenuButtonsVisible = true;
+    
+    // Ensure buttons container is visible and properly positioned
+    handMenuButtons.style.display = 'grid';
+    handMenuButtons.style.opacity = '1';
+    handMenuButtons.style.pointerEvents = 'auto';
+    
+    // Force a reflow to ensure positioning is stable before animating
+    void handMenuButtons.offsetHeight;
+    
+    // Ensure all buttons are in their final position before animating
+    // This prevents jitter during the animation
+    handMenuButtonElements.forEach(btn => {
+        if (btn.element) {
+            // Ensure button is in place
+            void btn.element.offsetHeight;
+        }
+    });
+    
+    // Small delay to ensure positioning is completely stable
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            // Animate lock indicator first (appears immediately)
+            if (handMenuLockIndicator) {
+                handMenuLockIndicator.style.opacity = '0';
+                handMenuLockIndicator.style.transform = 'scale(0.8)';
+                handMenuLockIndicator.style.transition = 'opacity 0.4s ease-out, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                
+                // Use requestAnimationFrame for smooth animation start
+                requestAnimationFrame(() => {
+                    handMenuLockIndicator.style.opacity = '1';
+                    handMenuLockIndicator.style.transform = 'scale(1)';
+                });
+            }
+            
+            // Animate each button with staggered pop-in effect (smooth transition)
+            handMenuButtonElements.forEach((btn, index) => {
+                if (!btn.element) {
+                    return;
+                }
+                
+                // Reset animation state
+                btn.element.style.opacity = '0';
+                btn.element.style.transform = 'scale(0.8)';
+                btn.element.style.transition = 'opacity 0.4s ease-out, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                
+                // Stagger the animation - each button appears 60ms after the previous one
+                // Start after lock indicator (100ms delay)
+                setTimeout(() => {
+                    requestAnimationFrame(() => {
+                        btn.element.style.opacity = '1';
+                        btn.element.style.transform = 'scale(1)';
+                    });
+                }, 100 + (index * 60));
+            });
+            
+            // Animate unlock button last
+            if (handMenuUnlockButton) {
+                handMenuUnlockButton.style.opacity = '0';
+                handMenuUnlockButton.style.transform = 'scale(0.8)';
+                handMenuUnlockButton.style.transition = 'opacity 0.4s ease-out, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                
+                const unlockDelay = 100 + (handMenuButtonElements.length * 60);
+                setTimeout(() => {
+                    requestAnimationFrame(() => {
+                        handMenuUnlockButton.style.opacity = '1';
+                        handMenuUnlockButton.style.transform = 'scale(1)';
+                    });
+                }, unlockDelay);
+            }
+        });
+    });
+}
+
+/**
+ * Hide hand menu buttons (during countdown)
+ */
+function hideHandMenuButtons() {
+    if (!handMenuButtons) {
+        return;
+    }
+    
+    // Hide all buttons
+    handMenuButtonElements.forEach(btn => {
+        if (btn.element) {
+            btn.element.style.opacity = '0';
+            btn.element.style.transform = 'scale(0.5)';
+        }
+    });
+    
+    // Hide lock indicator and unlock button
+    if (handMenuLockIndicator) {
+        handMenuLockIndicator.style.opacity = '0';
+    }
+    if (handMenuUnlockButton) {
+        handMenuUnlockButton.style.opacity = '0';
+    }
+    
+    // Keep container visible but buttons hidden
+    handMenuButtons.style.display = 'grid';
+    handMenuButtons.style.opacity = '0.01'; // Almost invisible but still takes up space
 }
 
 /**
