@@ -65,7 +65,7 @@ let currentPinchState = false; // Current debounced pinch state
 let pinchStatusElement = null; // DOM element for pinch status display
 
 // Pinch-to-click state
-let pinchToClickEnabled = false; // Whether pinch-to-click is enabled
+let pinchToClickEnabled = true; // Whether pinch-to-click is enabled (default: enabled)
 let lastPinchState = false; // Previous pinch state for detecting transitions
 let pinchOverlayCanvas = null; // Canvas for visual feedback
 let pinchOverlayCtx = null; // Canvas 2D context
@@ -2400,10 +2400,9 @@ function createHandMenuButtons() {
             button.appendChild(labelSpan);
         }
         
-        // Copy active state
-        if (navItem.classList.contains('active')) {
-            button.classList.add('active');
-        }
+        // Determine active state based on button ID and actual feature state
+        // We'll update this properly after creation
+        updateHandMenuButtonActiveState(button, navItem.id);
         
         // Add click handler - use the same handler as the original nav item
         if (navItem.id && elementClickRegistry && elementClickRegistry[navItem.id]) {
@@ -2423,6 +2422,77 @@ function createHandMenuButtons() {
             navItem: navItem,
             id: navItem.id
         });
+    });
+    
+    // Update all button active states after creation
+    updateAllHandMenuButtonStates();
+}
+
+/**
+ * Update active state of a hand menu button based on its ID
+ * @param {HTMLElement} button - Button element to update
+ * @param {string} buttonId - ID of the button (e.g., 'toggle-speech', 'toggle-sign')
+ */
+function updateHandMenuButtonActiveState(button, buttonId) {
+    if (!button || !buttonId) {
+        return;
+    }
+    
+    let isActive = false;
+    
+    // Map button IDs to their corresponding state
+    if (buttonId === 'toggle-speech') {
+        // Check if speech is enabled (we need to access appState, but it's in main.js)
+        // We'll use the nav item's active class as a fallback, but prefer to update via main.js
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-sign') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-scene') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-face') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-flip-camera') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    } else if (buttonId === 'toggle-pinch-click') {
+        const navItem = document.getElementById(buttonId);
+        isActive = navItem ? navItem.classList.contains('active') : false;
+    }
+    
+    // Update button active state
+    if (isActive) {
+        button.classList.add('active');
+    } else {
+        button.classList.remove('active');
+    }
+}
+
+/**
+ * Update all hand menu button active states
+ * This should be called whenever feature states change
+ */
+export function updateAllHandMenuButtonStates() {
+    if (!handMenuButtonElements || handMenuButtonElements.length === 0) {
+        return;
+    }
+    
+    handMenuButtonElements.forEach(btn => {
+        if (btn.element && btn.id) {
+            // Get the corresponding sidebar nav item to check its active state
+            const navItem = document.getElementById(btn.id);
+            if (navItem) {
+                const isActive = navItem.classList.contains('active');
+                if (isActive) {
+                    btn.element.classList.add('active');
+                } else {
+                    btn.element.classList.remove('active');
+                }
+            }
+        }
     });
 }
 
@@ -2515,20 +2585,82 @@ function processHandMenuQuadrilateral(results) {
     
     // Create quadrilateral: [leftThumb, rightThumb, rightIndex, leftIndex]
     // Order: bottom-left, bottom-right, top-right, top-left (counter-clockwise)
-    const quadrilateral = {
+    const rawQuadrilateral = {
         leftThumb: { x: leftThumb.x, y: leftThumb.y },
         rightThumb: { x: rightThumb.x, y: rightThumb.y },
         rightIndex: { x: rightIndex.x, y: rightIndex.y },
         leftIndex: { x: leftIndex.x, y: leftIndex.y }
     };
     
+    // Convert to rectangle (autocorrect shape to ensure opposite sides are same length)
+    const quadrilateral = convertQuadrilateralToRectangle(rawQuadrilateral);
+    
     handMenuQuadrilateral = quadrilateral;
     
     // Check for automatic locking
     checkHandMenuLock(quadrilateral);
     
-    // Update overlay with quadrilateral
+    // Update overlay with rectangle
     updateHandMenuOverlay(quadrilateral);
+}
+
+/**
+ * Convert a quadrilateral to a rectangle by autocorrecting its shape
+ * Ensures opposite sides are the same length
+ * @param {Object} quad - Quadrilateral with leftThumb, rightThumb, rightIndex, leftIndex
+ * @returns {Object} Rectangle with corrected coordinates
+ */
+function convertQuadrilateralToRectangle(quad) {
+    // Calculate center point of the quadrilateral
+    const centerX = (quad.leftThumb.x + quad.rightThumb.x + quad.rightIndex.x + quad.leftIndex.x) / 4;
+    const centerY = (quad.leftThumb.y + quad.rightThumb.y + quad.rightIndex.y + quad.leftIndex.y) / 4;
+    
+    // Calculate average width (average of top and bottom edges)
+    const bottomWidth = Math.abs(quad.rightThumb.x - quad.leftThumb.x);
+    const topWidth = Math.abs(quad.rightIndex.x - quad.leftIndex.x);
+    const avgWidth = (bottomWidth + topWidth) / 2;
+    
+    // Calculate average height (average of left and right edges)
+    const leftHeight = Math.abs(quad.leftIndex.y - quad.leftThumb.y);
+    const rightHeight = Math.abs(quad.rightIndex.y - quad.rightThumb.y);
+    const avgHeight = (leftHeight + rightHeight) / 2;
+    
+    // Calculate half-width and half-height
+    const halfWidth = avgWidth / 2;
+    const halfHeight = avgHeight / 2;
+    
+    // Create a perfect rectangle centered at the calculated center
+    // Order: bottom-left, bottom-right, top-right, top-left
+    const rectangle = {
+        leftThumb: {
+            x: centerX - halfWidth,
+            y: centerY + halfHeight
+        },
+        rightThumb: {
+            x: centerX + halfWidth,
+            y: centerY + halfHeight
+        },
+        rightIndex: {
+            x: centerX + halfWidth,
+            y: centerY - halfHeight
+        },
+        leftIndex: {
+            x: centerX - halfWidth,
+            y: centerY - halfHeight
+        }
+    };
+    
+    // Ensure coordinates are within valid range [0, 1]
+    rectangle.leftThumb.x = Math.max(0, Math.min(1, rectangle.leftThumb.x));
+    rectangle.leftThumb.y = Math.max(0, Math.min(1, rectangle.leftThumb.y));
+    rectangle.rightThumb.x = Math.max(0, Math.min(1, rectangle.rightThumb.x));
+    rectangle.rightThumb.y = Math.max(0, Math.min(1, rectangle.rightThumb.y));
+    rectangle.rightIndex.x = Math.max(0, Math.min(1, rectangle.rightIndex.x));
+    rectangle.rightIndex.y = Math.max(0, Math.min(1, rectangle.rightIndex.y));
+    rectangle.leftIndex.x = Math.max(0, Math.min(1, rectangle.leftIndex.x));
+    rectangle.leftIndex.y = Math.max(0, Math.min(1, rectangle.leftIndex.y));
+    
+    return rectangle;
 }
 
 /**
@@ -2563,6 +2695,8 @@ function checkHandMenuLock(quadrilateral) {
  */
 function lockHandMenu(quadrilateral) {
     handMenuLocked = true;
+    // Store the rectangle version of the quadrilateral when locking
+    // (quadrilateral should already be a rectangle from convertQuadrilateralToRectangle)
     lockedQuadrilateral = quadrilateral;
     handMenuLockStartTime = null; // Reset timer
     

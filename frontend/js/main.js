@@ -24,7 +24,8 @@ import {
     setClickRegistry,
     loadButtonPositions,
     setHandMenuMode,
-    unlockHandMenu
+    unlockHandMenu,
+    updateAllHandMenuButtonStates
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -66,7 +67,7 @@ const appState = {
     handMenuMode: false, // Hand menu mode state
     features: {
         speech: { enabled: false },
-        sign: { enabled: false },
+        sign: { enabled: true }, // Hand Detection always enabled by default
         scene: { enabled: false },
         face: { enabled: false }
     }
@@ -116,8 +117,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initialize hand menu mode toggle
     initializeHandMenuToggle();
     
-    // Initialize ML modules (speech-to-text, scene description, etc.)
-    initializeMLModules();
+        // Initialize ML modules (speech-to-text, scene description, etc.)
+        initializeMLModules();
+        
+        // Initialize MediaPipe on app startup (non-blocking)
+        initializeMediaPipeOnStartup();
+        
+        // Update UI to reflect that Hand Detection is enabled by default
+        updateFeatureUI('sign');
+        
+        // Enable pinch-to-click by default (always on)
+        setPinchToClickEnabled(true);
+        updatePinchClickUI(true);
         
         // Initialize face overlays
         try {
@@ -386,11 +397,17 @@ async function initializeCamera() {
                 // Set video element for ML modules (when video is actually playing)
                 setSceneVideoElement(video);
                 setFaceVideoElement(video);
-                setSignVideoElement(video);
                 
-                // Set click registry for pinch-to-click functionality
-                // This allows direct handler invocation, bypassing browser security restrictions
-                setClickRegistry(elementClickRegistry, getClickHandler);
+                // Set video element for hand detection (MediaPipe will use it when initialized)
+                // Also set click registry if MediaPipe is already initialized
+                if (isSignInitialized()) {
+                    setSignVideoElement(video);
+                    setClickRegistry(elementClickRegistry, getClickHandler);
+                } else {
+                    // MediaPipe not initialized yet, but set video element anyway
+                    // It will be used when MediaPipe initializes
+                    setSignVideoElement(video);
+                }
             }).catch(err => {
                 console.error('Error playing video:', err);
                 handleCameraError(err);
@@ -482,7 +499,7 @@ function initializeFeatureToggles() {
         toggleSpeech.addEventListener('click', () => toggleFeature('speech'));
     }
     
-    // Sign Language Toggle
+    // Hand Detection Toggle (always enabled)
     const toggleSign = document.getElementById('toggle-sign');
     if (toggleSign) {
         toggleSign.addEventListener('click', () => toggleFeature('sign'));
@@ -512,7 +529,7 @@ function initializeFeatureToggles() {
     const helpBtn = document.getElementById('help-btn');
     if (helpBtn) {
         helpBtn.addEventListener('click', () => {
-            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click');
+            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Hand Detection - Hand tracking and gesture recognition (always on)\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click (always on)');
         });
     }
     
@@ -525,21 +542,15 @@ function initializeFeatureToggles() {
 
 /**
  * Toggle pinch-to-click feature
+ * Note: Pinch-to-click is always enabled when Hand Detection is active
  */
 function togglePinchToClick() {
-    // Only enable if sign language is enabled
-    if (!appState.features.sign.enabled) {
-        alert('Please enable Sign Language feature first to use Pinch to Click.');
-        return;
-    }
+    // Pinch-to-click is always enabled when Hand Detection is active
+    // Just ensure it's enabled and show feedback
+    setPinchToClickEnabled(true);
+    updatePinchClickUI(true);
     
-    const currentState = isPinchToClickEnabled();
-    const newState = !currentState;
-    
-    setPinchToClickEnabled(newState);
-    updatePinchClickUI(newState);
-    
-    console.log('Pinch-to-click toggled:', newState ? 'enabled' : 'disabled');
+    console.log('Pinch-to-click is always enabled');
 }
 
 /**
@@ -557,6 +568,11 @@ function updatePinchClickUI(enabled) {
             toggleButton.classList.remove('active');
             statusElement.textContent = 'Off';
         }
+    }
+    
+    // Update hand menu button states to reflect the change
+    if (typeof updateAllHandMenuButtonStates === 'function') {
+        updateAllHandMenuButtonStates();
     }
 }
 
@@ -577,10 +593,16 @@ function toggleFeature(featureName) {
             stopSpeechRecognition();
         }
     } else if (featureName === 'sign') {
+        // Hand Detection is always enabled - prevent disabling
+        if (!appState.features.sign.enabled) {
+            // Re-enable it immediately
+            appState.features.sign.enabled = true;
+            updateFeatureUI('sign');
+            alert('Hand Detection is always enabled and cannot be turned off.');
+            return;
+        }
         if (appState.features.sign.enabled) {
             startSignRecognition();
-        } else {
-            stopSignRecognition();
         }
     } else if (featureName === 'scene') {
         if (appState.features.scene.enabled) {
@@ -612,6 +634,11 @@ function updateFeatureUI(featureName) {
             button.classList.remove('active');
             status.textContent = 'Off';
         }
+    }
+    
+    // Update hand menu button states to reflect the change
+    if (typeof updateAllHandMenuButtonStates === 'function') {
+        updateAllHandMenuButtonStates();
     }
 }
 
@@ -659,7 +686,7 @@ function initializeMLModules() {
         console.error('Error initializing face recognition:', error);
     }
     
-    // Note: Sign language recognition is lazy-loaded when enabled (see initializeSignRecognition)
+    // Note: Hand Detection (MediaPipe Hands) is initialized on app startup (see initializeMediaPipeOnStartup)
 }
 
 /**
@@ -1058,19 +1085,113 @@ function stopSceneDescription() {
 }
 
 /**
-<<<<<<< HEAD
- * Initialize Sign Language Recognition module (lazy-loaded)
+ * Initialize MediaPipe on app startup (non-blocking)
+ */
+async function initializeMediaPipeOnStartup() {
+    console.log('Initializing MediaPipe Hands on app startup...');
+    
+    // Show loading status
+    updateCaptions('⏳ Loading Hand Detection (MediaPipe)...', false);
+    updateCameraStatus('Loading Hand Detection...', false);
+    
+    // Initialize MediaPipe in the background
+    // Don't wait for it to complete, let it load asynchronously
+    initSignRecognition().then(initialized => {
+        if (initialized) {
+            console.log('✅ MediaPipe Hands initialized on startup');
+            
+            // Update status to show it's ready
+            updateCaptions('✅ Hand Detection ready!', false);
+            updateCameraStatus('Hand Detection: Ready', true);
+            
+            // Clear status message after a moment
+            setTimeout(() => {
+                updateCaptions('', false);
+            }, 2000);
+            
+            // Set up display callback
+            setSignDisplayCallback((text, isInterim) => {
+                updateCaptions(text, isInterim);
+            });
+            
+            // Set video element if camera is already ready
+            if (appState.cameraReady) {
+                const video = document.getElementById('camera-video');
+                if (video) {
+                    setSignVideoElement(video);
+                    console.log('Video element set for MediaPipe');
+                }
+            }
+            
+            // Set click registry for pinch-to-click
+            try {
+                setClickRegistry(elementClickRegistry, getClickHandler);
+                console.log('Click registry set for pinch-to-click');
+            } catch (error) {
+                console.warn('Failed to set click registry:', error);
+            }
+            
+            // Enable pinch-to-click (always on)
+            try {
+                setPinchToClickEnabled(true);
+                updatePinchClickUI(true);
+                console.log('Pinch-to-click enabled (always on)');
+            } catch (error) {
+                console.warn('Failed to enable pinch-to-click:', error);
+            }
+            
+            // Start hand detection immediately (since it's always on)
+            if (appState.features.sign.enabled) {
+                startSignRecognition();
+            }
+            
+            // Automatically enable hand menu mode after MediaPipe is loaded
+            if (!appState.handMenuMode) {
+                console.log('Auto-enabling hand menu mode after MediaPipe initialization');
+                appState.handMenuMode = true;
+                
+                // Update UI
+                const handMenuToggle = document.getElementById('hand-menu-toggle');
+                if (handMenuToggle) {
+                    handMenuToggle.classList.add('active');
+                }
+                
+                // Update state in sign recognition module
+                updateHandMenuMode();
+                
+                // Save preference to localStorage
+                localStorage.setItem('handMenuMode', 'true');
+            }
+        } else {
+            console.warn('MediaPipe initialization failed on startup');
+            updateCaptions('❌ Hand Detection failed to load', true);
+            updateCameraStatus('Hand Detection: Failed', false);
+        }
+    }).catch(error => {
+        console.error('Error initializing MediaPipe on startup:', error);
+        updateCaptions('❌ Hand Detection error: ' + error.message, true);
+        updateCameraStatus('Hand Detection: Error', false);
+    });
+}
+
+/**
+ * Initialize Hand Detection module (MediaPipe Hands)
  */
 async function initializeSignRecognition() {
-    // Initialize sign language recognition module
+    // Check if already initialized
+    if (isSignInitialized()) {
+        console.log('Hand Detection already initialized');
+        return true;
+    }
+    // Initialize hand detection module (MediaPipe Hands)
     const initialized = await initSignRecognition();
     if (!initialized) {
-        console.warn('Sign language recognition not available');
+        console.warn('Hand Detection not available');
         // Update UI to show it's not available
         const signToggle = document.getElementById('toggle-sign');
         if (signToggle) {
             signToggle.disabled = true;
-            signToggle.title = 'Sign language recognition not available';
+            signToggle.title = 'Hand Detection not available';
         }
         return false;
     }
@@ -1080,12 +1201,12 @@ async function initializeSignRecognition() {
         updateCaptions(text, isInterim);
     });
     
-    console.log('Sign language recognition module initialized');
+    console.log('Hand Detection module initialized');
     return true;
 }
 
 /**
- * Start sign language recognition
+ * Start hand detection
  */
 async function startSignRecognition() {
     if (!appState.cameraReady) {
@@ -1100,40 +1221,32 @@ async function startSignRecognition() {
         return;
     }
     
-    // Lazy-load module if not initialized
+    // Check if module is initialized, if not wait for it
     if (!isSignInitialized()) {
-        console.log('Lazy-loading sign language recognition...');
-        updateCaptions('⏳ Loading MediaPipe from CDN... (30-60 seconds)', false);
+        console.log('MediaPipe not yet initialized, waiting...');
+        updateCaptions('⏳ Waiting for MediaPipe to initialize...', false);
         
-        try {
-            const initialized = await initializeSignRecognition();
-            if (!initialized) {
-                console.error('Failed to initialize sign language recognition');
-                updateCaptions('❌ MediaPipe failed to load. CDN files may not be downloading. Open Network tab in DevTools to check.', true);
-                // Disable the feature if it fails
-                appState.features.sign.enabled = false;
-                updateFeatureUI('sign');
-                return;
+        // Wait for MediaPipe to initialize (with timeout)
+        let waitCount = 0;
+        const maxWait = 120; // 60 seconds max wait (120 * 500ms)
+        
+        const waitForInit = setInterval(() => {
+            waitCount++;
+            if (isSignInitialized()) {
+                clearInterval(waitForInit);
+                updateCaptions('✅ MediaPipe ready! Starting detection...', false);
+                setTimeout(() => {
+                    startSignRecognition();
+                }, 500);
+            } else if (waitCount >= maxWait) {
+                clearInterval(waitForInit);
+                console.error('MediaPipe initialization timeout');
+                updateCaptions('❌ MediaPipe initialization timeout. Please refresh the page.', true);
+                updateCameraStatus('Hand Detection: Timeout', false);
+                // Don't disable Hand Detection - keep it enabled and wait
             }
-            
-            updateCaptions('✅ MediaPipe loaded! Starting detection...', false);
-            setTimeout(() => {
-                if (appState.features.sign.enabled) {
-                    updateCaptions('', false);
-                }
-            }, 2000);
-        } catch (error) {
-            console.error('Error initializing sign language recognition:', error);
-            const errorMsg = error.message || error.toString();
-            if (errorMsg.includes('assets not loading') || errorMsg.includes('CDN')) {
-                updateCaptions('❌ MediaPipe CDN issue: Files not loading. Check Network tab - look for .data and .tflite files. If they show errors, CDN is blocked.', true);
-            } else {
-                updateCaptions('❌ MediaPipe initialization failed. See console for details.', true);
-            }
-            appState.features.sign.enabled = false;
-            updateFeatureUI('sign');
-            return;
-        }
+        }, 500);
+        return;
     }
     
     // Ensure click registry is set before starting detection
@@ -1145,11 +1258,22 @@ async function startSignRecognition() {
         console.warn('Failed to set click registry:', error);
     }
     
+    // Enable pinch-to-click (always on)
+    try {
+        setPinchToClickEnabled(true);
+        console.log('Pinch-to-click enabled (always on)');
+        // Update UI to reflect enabled state
+        updatePinchClickUI(true);
+    } catch (error) {
+        console.warn('Failed to enable pinch-to-click:', error);
+    }
+    
     // Start detection
     try {
         await startDetection();
-        console.log('Sign language recognition started');
-        updateCaptions('✋ Sign language detection active', false);
+        console.log('Hand Detection started');
+        updateCaptions('✋ Hand Detection active', false);
+        updateCameraStatus('Hand Detection: Active', true);
         
         // Clear status message after a moment
         setTimeout(() => {
@@ -1158,27 +1282,26 @@ async function startSignRecognition() {
             }
         }, 2000);
     } catch (error) {
-        console.error('Error starting sign language detection:', error);
-        updateCaptions('❌ Cannot start: MediaPipe not ready. Disable and re-enable the feature.', true);
-        appState.features.sign.enabled = false;
-        updateFeatureUI('sign');
+        console.error('Error starting hand detection:', error);
+        updateCaptions('❌ Cannot start: MediaPipe not ready. Please wait a moment and try again.', true);
+        updateCameraStatus('Hand Detection: Waiting...', false);
+        // Don't disable Hand Detection - it should always be enabled
+        // Just log the error and wait for MediaPipe to be ready
     }
 }
 
 /**
- * Stop sign language recognition
+ * Stop hand detection
+ * Note: Hand Detection should not be stopped normally, but this function is kept for compatibility
  */
 function stopSignRecognition() {
     stopDetection();
     updateCaptions('', false);
     
-    // Disable pinch-to-click when sign language is disabled
-    if (isPinchToClickEnabled()) {
-        setPinchToClickEnabled(false);
-        updatePinchClickUI(false);
-    }
+    // Don't disable pinch-to-click - it's always enabled when Hand Detection is active
+    // Keep it enabled even if detection stops temporarily
     
-    console.log('Sign language recognition stopped');
+    console.log('Hand Detection stopped (should not normally happen)');
 }
 
 /**
@@ -1340,6 +1463,11 @@ function updateFlipCameraUI() {
             statusElement.textContent = 'Off';
         }
     }
+    
+    // Update hand menu button states to reflect the change
+    if (typeof updateAllHandMenuButtonStates === 'function') {
+        updateAllHandMenuButtonStates();
+    }
 }
 
 /**
@@ -1436,17 +1564,13 @@ function initializeHandMenuToggle() {
         return;
     }
     
-    // Load saved preference from localStorage
-    const savedHandMenuMode = localStorage.getItem('handMenuMode');
-    if (savedHandMenuMode === 'true') {
-        appState.handMenuMode = true;
-        handMenuToggle.classList.add('active');
-    }
+    // Hand menu mode should be OFF by default (don't load from localStorage)
+    appState.handMenuMode = false;
     
     // Add click event listener
     handMenuToggle.addEventListener('click', toggleHandMenuMode);
     
-    // Update state in sign recognition module
+    // Update state in sign recognition module (will set to disabled)
     updateHandMenuMode();
 }
 
@@ -1480,11 +1604,8 @@ function toggleHandMenuMode() {
             prompt.classList.add('hidden');
         }
     } else {
-        // Ensure sign language is enabled for hand menu to work
-        if (!appState.features.sign.enabled) {
-            // Enable sign language feature automatically
-            toggleFeature('sign');
-        }
+        // Hand Detection is always enabled, so hand menu should work
+        // No need to check or enable it
     }
     
     console.log('Hand menu mode toggled:', appState.handMenuMode ? 'enabled' : 'disabled');
@@ -1567,8 +1688,9 @@ export const elementClickRegistry = {
         toggleFeature('speech');
     },
     'toggle-sign': () => {
-        console.log('Pinch click: Toggling sign language');
-        toggleFeature('sign');
+        console.log('Pinch click: Hand Detection is always on');
+        // Hand Detection is always enabled - just show a message
+        alert('Hand Detection is always enabled and cannot be turned off.');
     },
     'toggle-scene': () => {
         console.log('Pinch click: Toggling scene description');

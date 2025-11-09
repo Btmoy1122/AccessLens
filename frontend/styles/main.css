@@ -145,8 +145,10 @@ html {
     left: 20px;
     width: 120px;
     height: 60px;
-    background: rgba(74, 144, 226, 0.2);
-    backdrop-filter: blur(10px);
+    /* Solid background to prevent overlap with content behind */
+    background: rgba(20, 20, 30, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border: 2px solid rgba(74, 144, 226, 0.4);
     border-radius: 12px;
     color: #fff;
@@ -159,7 +161,9 @@ html {
     justify-content: center;
     gap: 4px;
     transition: all 0.3s ease;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    /* Ensure button area is interactive and doesn't show content behind */
+    pointer-events: auto;
 }
 
 .hand-menu-toggle.active {
