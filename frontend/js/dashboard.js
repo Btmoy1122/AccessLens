@@ -149,8 +149,24 @@ async function loadMemoryLog() {
     } catch (error) {
         console.error('Error loading memory log:', error);
         if (memoryLoading) memoryLoading.style.display = 'none';
+        
+        // Check if it's a real error vs just no data
+        const errorMessage = error.message || error.toString();
+        const isPermissionError = errorMessage.includes('permission') || 
+                                  errorMessage.includes('Permission') ||
+                                  errorMessage.includes('permission-denied');
+        const isNetworkError = errorMessage.includes('network') || 
+                               errorMessage.includes('Network') ||
+                               errorMessage.includes('Failed to fetch');
+        
         if (memoryEmpty) {
-            memoryEmpty.textContent = 'Error loading memories. Please try again.';
+            if (isPermissionError || isNetworkError) {
+                // Real error - show error message
+                memoryEmpty.textContent = 'Error loading memories. Please check your connection and try again.';
+            } else {
+                // Likely just no memories - show friendly message
+                memoryEmpty.textContent = 'You have no memories yet. Start recording memories to see them here!';
+            }
             memoryEmpty.style.display = 'block';
         }
     }

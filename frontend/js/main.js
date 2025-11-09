@@ -264,12 +264,9 @@ function initializeApp() {
         // Initialize MediaPipe on app startup (non-blocking)
         initializeMediaPipeOnStartup();
         
-        // Update UI to reflect that Hand Detection is enabled by default
-        updateFeatureUI('sign');
-        
         // Enable pinch-to-click by default (always on)
+        // Note: Hand Detection and Pinch-to-click are always enabled, no UI toggles
         setPinchToClickEnabled(true);
-        updatePinchClickUI(true);
         
         // Initialize face overlays
         try {
@@ -1854,7 +1851,25 @@ async function showMemoriesModal(faceId, faceName) {
         if (memoriesLoading) {
             memoriesLoading.style.display = 'none';
         }
-        memoriesList.innerHTML = '<p style="color: #ff6b6b;">Error loading memories. Please try again.</p>';
+        
+        // Check if it's a permission error or network error vs just no data
+        const errorMessage = error.message || error.toString();
+        const isPermissionError = errorMessage.includes('permission') || 
+                                  errorMessage.includes('Permission') ||
+                                  errorMessage.includes('permission-denied');
+        const isNetworkError = errorMessage.includes('network') || 
+                               errorMessage.includes('Network') ||
+                               errorMessage.includes('Failed to fetch');
+        
+        if (isPermissionError || isNetworkError) {
+            // Real error - show error message
+            memoriesList.innerHTML = '<p style="color: #ff6b6b;">Error loading memories. Please check your connection and try again.</p>';
+        } else {
+            // Likely just no memories or empty result - show friendly message
+            if (memoriesEmpty) {
+                memoriesEmpty.style.display = 'block';
+            }
+        }
     }
 }
 
@@ -2221,7 +2236,6 @@ async function initializeMediaPipeOnStartup() {
             // Enable pinch-to-click (always on)
             try {
                 setPinchToClickEnabled(true);
-                updatePinchClickUI(true);
                 console.log('Pinch-to-click enabled (always on)');
             } catch (error) {
                 console.warn('Failed to enable pinch-to-click:', error);
@@ -2349,8 +2363,6 @@ async function startSignRecognition() {
     try {
         setPinchToClickEnabled(true);
         console.log('Pinch-to-click enabled (always on)');
-        // Update UI to reflect enabled state
-        updatePinchClickUI(true);
     } catch (error) {
         console.warn('Failed to enable pinch-to-click:', error);
     }
