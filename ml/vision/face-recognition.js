@@ -16,7 +16,7 @@
  */
 
 import * as faceapi from '@vladmandic/face-api';
-import { getAllFaces, addFace } from '@backend/services/face-service.js';
+import { getFacesByUser, addFace } from '@backend/services/face-service.js';
 
 // Configuration constants
 const DETECTION_INTERVAL_MS = 2000; // Run detection every 2 seconds
@@ -39,6 +39,7 @@ let recognizedFacesCache = new Map(); // Cache of currently recognized faces
 let pendingRegistration = null; // Face waiting to be registered
 let unknownFacesBuffer = new Map(); // Track unknown faces with timestamps for confidence buffer
 // Key: faceKey, Value: { firstSeen: timestamp, detection: detection, lastSeen: timestamp }
+let currentUserId = 'default'; // Current user ID for face operations
 
 // Callback functions
 let onFaceRecognizedCallback = null;
@@ -805,26 +806,49 @@ function cleanupRecognizedFacesCache(currentDetections) {
 }
 
 /**
+ * Set the current user ID for face operations.
+ * 
+ * @param {string} userId - User ID
+ */
+export function setUserId(userId) {
+    currentUserId = userId || 'default';
+    console.log('Face recognition userId set to:', currentUserId);
+}
+
+/**
+ * Get the current user ID.
+ * 
+ * @returns {string} Current user ID
+ */
+export function getUserId() {
+    return currentUserId;
+}
+
+/**
  * Register a new face.
  * Saves the face to Firebase and adds it to known faces.
  * 
  * @param {string} name - Name of the person
  * @param {string} notes - Additional notes about the person
  * @param {Object} detection - Face detection object with descriptor
+ * @param {string} [userId] - Optional user ID (defaults to currentUserId)
  * @returns {Promise<string>} Document ID of the saved face
  */
-export async function registerFace(name, notes, detection) {
+export async function registerFace(name, notes, detection, userId = null, isSelf = false) {
     try {
         if (!detection || !detection.descriptor) {
             throw new Error('Invalid detection: missing descriptor');
         }
+        
+        const faceUserId = userId || currentUserId;
         
         // Save to Firebase
         const faceId = await addFace({
             name: name,
             notes: notes || '',
             embedding: detection.descriptor,
-            userId: 'default' // TODO: Get from app state or auth
+            userId: faceUserId,
+            isSelf: isSelf
         });
         
         // Add to known faces array
@@ -833,7 +857,8 @@ export async function registerFace(name, notes, detection) {
             name: name,
             notes: notes || '',
             embedding: detection.descriptor,
-            userId: 'default'
+            userId: faceUserId,
+            isSelf: isSelf
         };
         
         knownFaces.push(newFace);
@@ -841,7 +866,7 @@ export async function registerFace(name, notes, detection) {
         // Clear pending registration
         pendingRegistration = null;
         
-        console.log(`Face registered: ${name} (ID: ${faceId})`);
+        console.log(`Face registered: ${name} (ID: ${faceId}, User: ${faceUserId}, isSelf: ${isSelf})`);
         return faceId;
     } catch (error) {
         console.error('Error registering face:', error);
@@ -851,14 +876,29 @@ export async function registerFace(name, notes, detection) {
 
 /**
  * Load known faces from Firebase.
+ * Filters faces by current user ID.
  * 
  * @returns {Promise<void>}
  */
 async function loadKnownFaces() {
     try {
         console.log('Loading known faces from Firebase...');
-        knownFaces = await getAllFaces();
-        console.log(`Loaded ${knownFaces.length} known faces`);
+        
+        // Get faces for current user (server-side filtered)
+        knownFaces = await getFacesByUser(currentUserId);
+        
+        // Also load 'default' faces for backward compatibility if needed
+        // (Only if currentUserId is not 'default' to avoid duplicate loading)
+        if (currentUserId !== 'default') {
+            try {
+                const defaultFaces = await getFacesByUser('default');
+                knownFaces = [...knownFaces, ...defaultFaces];
+            } catch (error) {
+                console.warn('Could not load default faces:', error);
+            }
+        }
+        
+        console.log(`Loaded ${knownFaces.length} known faces for user: ${currentUserId}`);
     } catch (error) {
         console.error('Error loading known faces:', error);
         knownFaces = [];

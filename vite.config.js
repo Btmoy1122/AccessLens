@@ -37,6 +37,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'frontend/index.html'),
+        login: path.resolve(__dirname, 'frontend/login.html'),
+        dashboard: path.resolve(__dirname, 'frontend/dashboard.html'),
+        settings: path.resolve(__dirname, 'frontend/settings.html'),
       },
     },
   },

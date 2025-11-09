@@ -1,0 +1,149 @@
+/**
+ * AccessLens - "Clear Vision" Theme
+ * Modern & Accessible Dark Mode
+ */
+
+/* Color Palette */
+:root {
+    /* Background */
+    --bg-primary: #121212;
+    --bg-secondary: #1E1E2D;
+    --bg-tertiary: #2A2A3A;
+    
+    /* Text */
+    --text-primary: #E0E0E0;
+    --text-secondary: #B0B0B0;
+    --text-muted: #808080;
+    
+    /* Accent (Google Blue) */
+    --accent-primary: #4285f4;
+    --accent-hover: #357ae8;
+    --accent-light: rgba(66, 133, 244, 0.1);
+    
+    /* Borders */
+    --border-color: rgba(255, 255, 255, 0.1);
+    --border-hover: rgba(255, 255, 255, 0.2);
+    
+    /* Font */
+    --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+/* Apply Inter font globally */
+* {
+    font-family: var(--font-family) !important;
+}
+
+/* Override Pico.css dark theme colors */
+[data-theme="dark"] {
+    --pico-background-color: var(--bg-primary);
+    --pico-color: var(--text-primary);
+    --pico-text-selection-background-color: var(--accent-light);
+    --pico-primary: var(--accent-primary);
+    --pico-primary-background: var(--accent-primary);
+    --pico-primary-underline: var(--accent-primary);
+    --pico-primary-hover: var(--accent-hover);
+    --pico-primary-hover-background: var(--accent-hover);
+    --pico-primary-focus: var(--accent-primary);
+    --pico-primary-inverse: var(--text-primary);
+    --pico-secondary-background: var(--bg-secondary);
+    --pico-secondary-inverse: var(--text-primary);
+    --pico-contrast-background: var(--bg-tertiary);
+    --pico-contrast-inverse: var(--text-primary);
+    --pico-muted-border-color: var(--border-color);
+    --pico-muted-background: var(--bg-secondary);
+    --pico-border-color: var(--border-color);
+    --pico-form-element-background-color: var(--bg-secondary);
+    --pico-form-element-border-color: var(--border-color);
+    --pico-form-element-color: var(--text-primary);
+    --pico-form-element-placeholder-color: var(--text-muted);
+    --pico-form-element-active-border-color: var(--accent-primary);
+    --pico-form-element-focus-color: var(--accent-primary);
+    --pico-form-element-invalid-border-color: #ff6b6b;
+    --pico-form-element-valid-border-color: #51cf66;
+    --pico-switch-background-color: var(--bg-tertiary);
+    --pico-switch-checked-background-color: var(--accent-primary);
+    --pico-switch-color: var(--text-primary);
+    --pico-mark-background-color: var(--accent-light);
+    --pico-mark-color: var(--text-primary);
+    --pico-ins-color: #51cf66;
+    --pico-del-color: #ff6b6b;
+    --pico-blockquote-border-color: var(--border-color);
+    --pico-code-background-color: var(--bg-secondary);
+    --pico-code-color: var(--text-primary);
+    --pico-table-border-color: var(--border-color);
+    --pico-table-row-stripped-background-color: var(--bg-secondary);
+}
+
+/* Global body styles for theme pages */
+body.auth-page,
+body.dashboard-page,
+body.settings-page {
+    background: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    font-family: var(--font-family) !important;
+}
+
+html:has(body.auth-page),
+html:has(body.dashboard-page),
+html:has(body.settings-page) {
+    background: var(--bg-primary) !important;
+}
+
+/* Icon styles */
+.btn-icon,
+.btn-icon-small,
+.section-icon,
+.hero-icon {
+    width: 1em;
+    height: 1em;
+    display: inline-block;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.btn-icon-small {
+    width: 0.875em;
+    height: 0.875em;
+}
+
+.section-icon {
+    width: 1.25em;
+    height: 1.25em;
+    margin-right: 0.5rem;
+    vertical-align: middle;
+    flex-shrink: 0;
+}
+
+.hero-icon {
+    width: 4rem;
+    height: 4rem;
+    margin-bottom: 1rem;
+    color: var(--accent-primary);
+    flex-shrink: 0;
+}
+
+/* Button icon alignment */
+button .btn-icon,
+a .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+}
+
+/* Ensure icons in buttons are properly sized */
+.btn-auth .btn-icon,
+.btn-primary .btn-icon,
+.btn-hero .btn-icon {
+    width: 20px;
+    height: 20px;
+}
+
+/* Link colors in dark mode */
+a {
+    color: var(--accent-primary, #4285f4);
+}
+
+a:hover {
+    color: var(--accent-hover, #357ae8);
+}
+
