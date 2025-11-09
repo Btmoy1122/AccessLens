@@ -69,21 +69,24 @@ export default firebaseConfig;
 }
 ```
 
-## Step 6: Security Rules (Test Mode)
+## Step 6: Security Rules
 
-For hackathon, use test mode:
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
-    }
-  }
-}
-```
+**⚠️ IMPORTANT**: Use the security rules from `firestore.rules` file in the project root.
 
-**⚠️ Note**: This is insecure for production. Update rules before deployment.
+1. Go to Firebase Console > Firestore Database > Rules
+2. Copy the contents of `firestore.rules` from this project
+3. Paste into the Rules editor
+4. Click **Publish**
+
+The security rules ensure:
+- Users can only access their own data
+- Faces are isolated per user
+- Interactions are isolated per user
+- Prevents unauthorized data access
+
+**⚠️ Note**: The old test mode rules (`allow read, write: if true`) are insecure. Always use the proper security rules from `firestore.rules`.
+
+See `docs/SECURITY_RULES_SETUP.md` for detailed security rules documentation.
 
 ## Step 7: Install Firebase SDK
 

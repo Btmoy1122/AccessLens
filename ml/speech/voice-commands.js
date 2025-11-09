@@ -46,13 +46,6 @@ const COMMAND_PATTERNS = {
     'speech captions': 'toggleSpeech',
     'speech': 'toggleSpeech',
     
-    'enable sign language': 'toggleSign',
-    'disable sign language': 'toggleSign',
-    'turn on sign language': 'toggleSign',
-    'turn off sign language': 'toggleSign',
-    'sign language': 'toggleSign',
-    'sign': 'toggleSign',
-    
     'enable scene description': 'toggleScene',
     'disable scene description': 'toggleScene',
     'turn on scene description': 'toggleScene',

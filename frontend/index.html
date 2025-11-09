@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AccessLens - AR Accessibility Assistant</title>
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+    <link rel="alternate icon" href="/icons/favicon.svg">
     
     <!-- A-Frame - Loaded dynamically when needed -->
     <!-- <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script> -->
@@ -44,6 +46,18 @@
         <span class="toggle-label">Hand Menu</span>
     </button>
 
+    <!-- Camera Flip Button - Switch between front and back cameras (mobile-friendly) -->
+    <button id="camera-flip-button" class="camera-flip-button" aria-label="Switch camera">
+        <span class="flip-icon">🔄</span>
+        <span class="flip-label">Switch Camera</span>
+    </button>
+
+    <!-- Home Page Button - Bottom Left Corner -->
+    <a href="/dashboard.html" id="home-button" class="home-button" aria-label="Go to Home Page">
+        <span class="home-icon">🏠</span>
+        <span class="home-label">Home Page</span>
+    </a>
+
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
@@ -60,11 +74,6 @@
                     <span class="nav-icon">🗣️</span>
                     <span class="nav-label">Speech Captions</span>
                     <span class="nav-status" id="status-speech">Off</span>
-                </button>
-                <button class="nav-item" id="toggle-sign">
-                    <span class="nav-icon">✋</span>
-                    <span class="nav-label">Hand Detection</span>
-                    <span class="nav-status" id="status-sign">Off</span>
                 </button>
                 <button class="nav-item" id="toggle-scene">
                     <span class="nav-icon">👁️</span>
@@ -91,6 +100,14 @@
                     <span class="nav-status" id="status-view-memories"></span>
                 </button>
             </div>
+            
+            <div class="nav-section">
+                <h3>Navigation</h3>
+                <a href="/settings.html" class="nav-item">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-label">Settings</span>
+                </a>
+            </div>
 
             <div class="nav-section">
                 <h3>Settings</h3>
@@ -104,15 +121,6 @@
                     <span class="nav-icon">🪞</span>
                     <span class="nav-label">Mirror Camera</span>
                     <span class="nav-status" id="status-flip-camera">Off</span>
-                </button>
-                <button class="nav-item" id="toggle-pinch-click">
-                    <span class="nav-icon">👆</span>
-                    <span class="nav-label">Pinch to Click</span>
-                    <span class="nav-status" id="status-pinch-click">Off</span>
-                </button>
-                <button class="nav-item" id="settings-btn">
-                    <span class="nav-icon">⚙️</span>
-                    <span class="nav-label">Settings</span>
                 </button>
                 <button class="nav-item" id="help-btn">
                     <span class="nav-icon">❓</span>
@@ -200,7 +208,7 @@
                     <p>Loading memories...</p>
                 </div>
                 <div id="memories-empty" class="memories-empty" style="display: none;">
-                    <p>No memories found for this person.</p>
+                    <p>You have no memories for this person yet.</p>
                 </div>
                 <div id="memories-list" class="memories-list">
                     <!-- Memories will be inserted here -->

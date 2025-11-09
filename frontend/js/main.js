@@ -49,6 +49,7 @@ import {
     stopRecognition,
     setVideoElement as setFaceVideoElement,
     registerFace,
+    setUserId as setFaceUserId,
     onFaceRecognized,
     onNewFace,
     onFaceUpdate,
@@ -57,7 +58,9 @@ import {
     clearPendingRegistration,
     reloadKnownFaces,
     getPrimaryFaceOnScreen,
-    getAllRecognizedFaces
+    getAllRecognizedFaces,
+    getPrimaryFaceWithDetection,
+    getMouthPosition
 } from '@ml/vision/face-recognition.js';
 import {
     initFaceOverlays,
@@ -68,6 +71,7 @@ import {
     cleanupInvisibleOverlays
 } from './face-overlays.js';
 import { addInteraction, getInteractions, getFaceMemorySummary } from '@backend/services/face-service.js';
+import { getCurrentUser, onAuthStateChange } from '@backend/services/auth-service.js';
 
 // Application State
 const appState = {
@@ -78,6 +82,8 @@ const appState = {
     availableCameras: [], // List of available camera devices
     selectedCameraId: null, // Currently selected camera device ID
     handMenuMode: false, // Hand menu mode state
+    currentUser: null, // Current authenticated user
+    userId: null, // Current user ID
     features: {
         speech: { enabled: false },
         sign: { enabled: true }, // Hand Detection always enabled by default
@@ -108,10 +114,82 @@ let selectedFaceForMemory = null; // Selected face for current memory recording 
 const latestSummaryCache = new Map(); // Key: faceId, Value: { summary, timestamp }
 const SUMMARY_CACHE_TIMEOUT = 10000; // Refresh summary every 10 seconds
 
+// Speech bubble tracking state
+let speechBubbleTrackingActive = false; // Whether speech bubble should track face
+let speechBubbleUpdateAnimationFrame = null; // Animation frame ID for continuous updates
+let lastMouthPosition = null; // Last known mouth position for smoothing
+let positionHistory = []; // History of positions for smoothing (max 5)
+const MAX_POSITION_HISTORY = 5; // Keep last 5 positions for smoothing
+
 /**
  * Initialize the application
  */
-document.addEventListener('DOMContentLoaded', () => {
+// Check authentication and initialize app
+let authChecked = false;
+let domReady = false;
+
+// Check if DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        domReady = true;
+        tryInitializeApp();
+    });
+} else {
+    domReady = true;
+    tryInitializeApp();
+}
+
+// Check authentication or guest mode
+onAuthStateChange((user) => {
+    // Check for guest mode first
+    const isGuestMode = sessionStorage.getItem('guestMode') === 'true';
+    const guestUserId = sessionStorage.getItem('guestUserId');
+    
+    if (!user && !isGuestMode) {
+        // Not logged in and not guest, redirect to login
+        window.location.href = '/login.html';
+        return;
+    }
+    
+    if (isGuestMode && guestUserId) {
+        // Guest mode - use guest user
+        appState.currentUser = {
+            uid: guestUserId,
+            email: null,
+            displayName: 'Guest',
+            isGuest: true
+        };
+        appState.userId = guestUserId;
+        console.log('Guest mode enabled:', guestUserId);
+        
+        // Set userId in face recognition module (guest faces won't be saved)
+        setFaceUserId(guestUserId);
+        
+        authChecked = true;
+        tryInitializeApp();
+    } else if (user) {
+        // User is logged in, set user info
+        appState.currentUser = user;
+        appState.userId = user.uid;
+        console.log('User authenticated:', user.uid);
+        
+        // Set userId in face recognition module
+        setFaceUserId(user.uid);
+        
+        authChecked = true;
+        tryInitializeApp();
+    }
+});
+
+function tryInitializeApp() {
+    // Only initialize if both auth is checked and DOM is ready
+    if (authChecked && domReady && !document.body.dataset.initialized) {
+        initializeApp();
+        document.body.dataset.initialized = 'true';
+    }
+}
+
+function initializeApp() {
     try {
         console.log('AccessLens initialized');
         
@@ -165,6 +243,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initialize camera flip toggle
         initializeCameraFlip();
         
+        // Initialize camera flip button (for switching between front/back cameras)
+        initializeCameraFlipButton();
+        
     // Initialize camera selector (will be populated after cameras are enumerated)
     initializeCameraSelector();
     
@@ -195,12 +276,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initialize MediaPipe on app startup (non-blocking)
         initializeMediaPipeOnStartup();
         
-        // Update UI to reflect that Hand Detection is enabled by default
-        updateFeatureUI('sign');
-        
         // Enable pinch-to-click by default (always on)
+        // Note: Hand Detection and Pinch-to-click are always enabled, no UI toggles
         setPinchToClickEnabled(true);
-        updatePinchClickUI(true);
         
         // Initialize face overlays
         try {
@@ -259,7 +337,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
         console.error('Error initializing AccessLens:', error);
     }
-});
+}
 
 /**
  * Get and cache DOM elements
@@ -592,6 +670,9 @@ async function enumerateCameras(skipPermissionCheck = false) {
         // Update camera selector UI
         updateCameraSelector();
         
+        // Update camera flip button visibility
+        updateCameraFlipButtonVisibility();
+        
         return videoDevices;
     } catch (error) {
         console.error('Error enumerating cameras:', error);
@@ -773,12 +854,6 @@ function initializeFeatureToggles() {
         toggleSpeech.addEventListener('click', () => toggleFeature('speech'));
     }
     
-    // Hand Detection Toggle (always enabled)
-    const toggleSign = document.getElementById('toggle-sign');
-    if (toggleSign) {
-        toggleSign.addEventListener('click', () => toggleFeature('sign'));
-    }
-    
     // Scene Description Toggle
     const toggleScene = document.getElementById('toggle-scene');
     if (toggleScene) {
@@ -791,62 +866,12 @@ function initializeFeatureToggles() {
         toggleFace.addEventListener('click', () => toggleFeature('face'));
     }
     
-    // Settings Button
-    const settingsBtn = document.getElementById('settings-btn');
-    if (settingsBtn) {
-        settingsBtn.addEventListener('click', () => {
-            alert('Settings panel - Coming soon!');
-        });
-    }
-    
     // Help Button
     const helpBtn = document.getElementById('help-btn');
     if (helpBtn) {
         helpBtn.addEventListener('click', () => {
-            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Hand Detection - Hand tracking and gesture recognition (always on)\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click (always on)');
+            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n\nNote: Hand Detection and Pinch to Click are always enabled when the camera is active.');
         });
-    }
-    
-    // Pinch to Click Toggle
-    const togglePinchClick = document.getElementById('toggle-pinch-click');
-    if (togglePinchClick) {
-        togglePinchClick.addEventListener('click', togglePinchToClick);
-    }
-}
-
-/**
- * Toggle pinch-to-click feature
- * Note: Pinch-to-click is always enabled when Hand Detection is active
- */
-function togglePinchToClick() {
-    // Pinch-to-click is always enabled when Hand Detection is active
-    // Just ensure it's enabled and show feedback
-    setPinchToClickEnabled(true);
-    updatePinchClickUI(true);
-    
-    console.log('Pinch-to-click is always enabled');
-}
-
-/**
- * Update pinch-to-click button UI
- */
-function updatePinchClickUI(enabled) {
-    const toggleButton = document.getElementById('toggle-pinch-click');
-    const statusElement = document.getElementById('status-pinch-click');
-    
-    if (toggleButton && statusElement) {
-        if (enabled) {
-            toggleButton.classList.add('active');
-            statusElement.textContent = 'On';
-        } else {
-            toggleButton.classList.remove('active');
-            statusElement.textContent = 'Off';
-        }
-    }
-    
-    // Update hand menu button states to reflect the change
-    if (typeof updateAllHandMenuButtonStates === 'function') {
-        updateAllHandMenuButtonStates();
     }
 }
 
@@ -875,17 +900,10 @@ function toggleFeature(featureName) {
             startListening();
         }
     } else if (featureName === 'sign') {
-        // Hand Detection is always enabled - prevent disabling
-        if (!appState.features.sign.enabled) {
-            // Re-enable it immediately
-            appState.features.sign.enabled = true;
-            updateFeatureUI('sign');
-            alert('Hand Detection is always enabled and cannot be turned off.');
-            return;
-        }
-        if (appState.features.sign.enabled) {
-            startSignRecognition();
-        }
+        // Hand Detection is always enabled - this should not be called anymore
+        // since the toggle button has been removed, but keep this for safety
+        appState.features.sign.enabled = true;
+        startSignRecognition();
     } else if (featureName === 'scene') {
         if (appState.features.scene.enabled) {
             startSceneDescription();
@@ -1026,10 +1044,6 @@ function initializeSpeechToText() {
             console.log('Voice command: Toggle speech');
             toggleFeature('speech');
         },
-        toggleSign: () => {
-            console.log('Voice command: Toggle sign language');
-            toggleFeature('sign');
-        },
         toggleScene: () => {
             console.log('Voice command: Toggle scene description');
             toggleFeature('scene');
@@ -1059,10 +1073,10 @@ function initializeSpeechToText() {
             // Show help dialog or list available commands
             const commands = [
                 'Open menu', 'Close menu', 'Toggle menu',
-                'Enable speech', 'Enable sign language',
+                'Enable speech',
                 'Enable scene description', 'Enable face recognition',
-                'Enable hand menu', 'Fix menu', 'Reset menu', // Updated help
-                'Mirror camera', 'Flip camera' // Updated help
+                'Enable hand menu', 'Fix menu', 'Reset menu',
+                'Mirror camera', 'Flip camera'
             ];
             alert(`Available Voice Commands:\n\n${commands.join('\n')}`);
         }
@@ -1122,6 +1136,9 @@ function initializeFaceRecognition() {
     // Show loading status
     console.log('Initializing face recognition...');
     
+    // Check if this is self registration flow
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    
     // Initialize face recognition models
     initFaceRecognition().then(success => {
         if (success) {
@@ -1129,6 +1146,19 @@ function initializeFaceRecognition() {
             
             // Set up callbacks for face recognition events
             setupFaceRecognitionCallbacks();
+            
+            // If this is self registration, enable face recognition automatically
+            if (isSelfRegistration) {
+                // Enable face recognition feature
+                if (!appState.features.face.enabled) {
+                    toggleFeature('face');
+                }
+                // Show message to user
+                updateCaptions('👤 Please look at the camera to register your face...', false);
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 5000);
+            }
         } else {
             console.warn('Face recognition not available');
             // Update UI to show it's not available
@@ -1136,6 +1166,11 @@ function initializeFaceRecognition() {
             if (faceToggle) {
                 faceToggle.disabled = true;
                 faceToggle.title = 'Face recognition not supported in this browser. Models may have failed to load.';
+            }
+            
+            // If self registration and face recognition failed, show error
+            if (isSelfRegistration) {
+                updateCaptions('❌ Face recognition failed to load. Please refresh the page.', true);
             }
         }
     }).catch(error => {
@@ -1147,10 +1182,14 @@ function initializeFaceRecognition() {
         }
         
         // Show error in UI
-        updateCaptions('❌ Face recognition failed to initialize. Check console for details.', true);
-        setTimeout(() => {
-            updateCaptions('', false);
-        }, 5000);
+        if (isSelfRegistration) {
+            updateCaptions('❌ Face recognition failed to load. Please refresh the page.', true);
+        } else {
+            updateCaptions('❌ Face recognition failed to initialize. Check console for details.', true);
+            setTimeout(() => {
+                updateCaptions('', false);
+            }, 5000);
+        }
     });
 }
 
@@ -1177,18 +1216,28 @@ function setupFaceRecognitionCallbacks() {
     onNewFace((detection, faceKey) => {
         console.log('New face detected - ready for registration', { faceKey });
         
+        // Check if this is self registration
+        const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+        
         // Store the detection for registration
         currentPendingDetection = { detection, faceKey };
         
         // Show unknown face overlay
         const video = document.getElementById('camera-video');
         if (video && detection) {
-            updateFaceOverlay(faceKey, { name: 'Unknown', notes: 'Tap to register' }, detection, video);
+            if (isSelfRegistration) {
+                updateFaceOverlay(faceKey, { name: 'You', notes: 'Register your face' }, detection, video);
+            } else {
+                updateFaceOverlay(faceKey, { name: 'Unknown', notes: 'Tap to register' }, detection, video);
+            }
         }
         
         // Show modal after a short delay (so user can see the face)
         setTimeout(() => {
             showFaceRegistrationModal();
+            if (isSelfRegistration) {
+                updateCaptions('👤 Face detected! Please register your face below.', false);
+            }
         }, 1000);
     });
     
@@ -1289,6 +1338,10 @@ function setupFaceRecognitionCallbacks() {
         
         // Update View Memories button visibility based on recognized faces
         updateViewMemoriesButton();
+        
+        // Speech bubble position is now updated continuously via requestAnimationFrame
+        // when speechBubbleTrackingActive is true, so we don't need to update here
+        // This reduces redundant updates and improves performance
     });
     
     // Callback when a face is removed from cache
@@ -1310,12 +1363,32 @@ function initializeFaceRegistrationModal() {
     // Close modal handlers
     if (faceModalClose) {
         faceModalClose.addEventListener('click', () => {
+            // Check if this is self registration - don't allow closing
+            const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+            if (isSelfRegistration) {
+                // Show message that self registration is required
+                updateCaptions('⚠️ Please register your face to continue using AccessLens.', true);
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 3000);
+                return;
+            }
             hideFaceRegistrationModal();
         });
     }
     
     if (faceSkipBtn) {
         faceSkipBtn.addEventListener('click', () => {
+            // Check if this is self registration - don't allow skipping
+            const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+            if (isSelfRegistration) {
+                // Show message that self registration is required
+                updateCaptions('⚠️ Please register your face to continue using AccessLens.', true);
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 3000);
+                return;
+            }
             hideFaceRegistrationModal();
         });
     }
@@ -1336,10 +1409,15 @@ function initializeFaceRegistrationModal() {
         });
     }
     
-    // Close modal when clicking outside
+    // Close modal when clicking outside (but not for self registration)
     if (faceRegistrationModal) {
         faceRegistrationModal.addEventListener('click', (e) => {
             if (e.target === faceRegistrationModal) {
+                const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+                if (isSelfRegistration) {
+                    // Don't allow closing self registration modal by clicking outside
+                    return;
+                }
                 hideFaceRegistrationModal();
             }
         });
@@ -1453,13 +1531,21 @@ async function stopMemoryRecording() {
         selectedFaceForMemory = primaryFace;
     }
     
-    // Save to Firebase
+    // Save to Firebase (skip if guest mode)
+    if (appState.currentUser?.isGuest) {
+        updateCaptions('👤 Guest mode: Memory not saved. Sign in to save memories.', false);
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 3000);
+        return;
+    }
+    
     try {
         updateCaptions('💾 Saving memory...', false);
         const interactionId = await addInteraction({
             faceId: selectedFaceForMemory.faceId,
             rawTranscript: transcript, // Raw transcript - Cloud Function will generate summary
-            userId: 'default' // TODO: Get from app state or auth
+            userId: appState.userId || 'default'
         });
         
         console.log('Memory saved successfully:', interactionId);
@@ -1784,7 +1870,25 @@ async function showMemoriesModal(faceId, faceName) {
         if (memoriesLoading) {
             memoriesLoading.style.display = 'none';
         }
-        memoriesList.innerHTML = '<p style="color: #ff6b6b;">Error loading memories. Please try again.</p>';
+        
+        // Check if it's a permission error or network error vs just no data
+        const errorMessage = error.message || error.toString();
+        const isPermissionError = errorMessage.includes('permission') || 
+                                  errorMessage.includes('Permission') ||
+                                  errorMessage.includes('permission-denied');
+        const isNetworkError = errorMessage.includes('network') || 
+                               errorMessage.includes('Network') ||
+                               errorMessage.includes('Failed to fetch');
+        
+        if (isPermissionError || isNetworkError) {
+            // Real error - show error message
+            memoriesList.innerHTML = '<p style="color: #ff6b6b;">Error loading memories. Please check your connection and try again.</p>';
+        } else {
+            // Likely just no memories or empty result - show friendly message
+            if (memoriesEmpty) {
+                memoriesEmpty.style.display = 'block';
+            }
+        }
     }
 }
 
@@ -1806,16 +1910,85 @@ function hideMemoriesModal() {
  * Show face registration modal
  */
 function showFaceRegistrationModal() {
-    if (!faceRegistrationModal || !currentPendingDetection) {
+    console.log('🔄 showFaceRegistrationModal called:', {
+        hasModal: !!faceRegistrationModal,
+        hasPendingDetection: !!currentPendingDetection,
+        modalDisplay: faceRegistrationModal?.style.display
+    });
+    
+    if (!faceRegistrationModal) {
+        console.error('❌ Cannot show modal: faceRegistrationModal not found');
         return;
     }
     
+    if (!currentPendingDetection) {
+        console.error('❌ Cannot show modal: No pending detection');
+        updateCaptions('❌ Error: No face detected. Please look at the camera.', true);
+        return;
+    }
+    
+    // Check if this is self registration
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    
     // Reset form
     if (faceNameInput) {
-        faceNameInput.value = '';
+        if (isSelfRegistration && appState.currentUser) {
+            // Pre-fill with user's display name or "Me"
+            faceNameInput.value = appState.currentUser.displayName || 'Me';
+        } else {
+            faceNameInput.value = '';
+        }
     }
     if (faceNotesInput) {
-        faceNotesInput.value = '';
+        if (isSelfRegistration) {
+            faceNotesInput.value = 'This is me - the user of AccessLens';
+            faceNotesInput.style.display = 'none'; // Hide notes for self registration
+            // Hide the label too
+            const notesLabel = faceRegistrationModal.querySelector('label[for="face-notes"]');
+            if (notesLabel) {
+                notesLabel.style.display = 'none';
+            }
+        } else {
+            faceNotesInput.value = '';
+            faceNotesInput.style.display = ''; // Show notes for other registrations
+            const notesLabel = faceRegistrationModal.querySelector('label[for="face-notes"]');
+            if (notesLabel) {
+                notesLabel.style.display = '';
+            }
+        }
+    }
+    
+    // Update modal title and description for self registration
+    const modalTitle = faceRegistrationModal.querySelector('.modal-header h3');
+    const modalDescription = faceRegistrationModal.querySelector('.modal-description');
+    if (isSelfRegistration) {
+        if (modalTitle) {
+            modalTitle.textContent = 'Register Your Face';
+        }
+        if (modalDescription) {
+            modalDescription.textContent = 'Please register your face so AccessLens can recognize you. Look at the camera and click "Register".';
+        }
+        // Hide skip button and close button for self registration
+        if (faceSkipBtn) {
+            faceSkipBtn.style.display = 'none';
+        }
+        if (faceModalClose) {
+            faceModalClose.style.display = 'none';
+        }
+    } else {
+        if (modalTitle) {
+            modalTitle.textContent = 'Register New Face';
+        }
+        if (modalDescription) {
+            modalDescription.textContent = 'Enter a name and optional notes for this person.';
+        }
+        // Show skip button and close button for regular registration
+        if (faceSkipBtn) {
+            faceSkipBtn.style.display = '';
+        }
+        if (faceModalClose) {
+            faceModalClose.style.display = '';
+        }
     }
     
     // Show modal
@@ -1828,6 +2001,10 @@ function showFaceRegistrationModal() {
     if (faceNameInput) {
         setTimeout(() => {
             faceNameInput.focus();
+            // Select all text if it's pre-filled
+            if (isSelfRegistration) {
+                faceNameInput.select();
+            }
         }, 100);
     }
 }
@@ -1837,6 +2014,13 @@ function showFaceRegistrationModal() {
  */
 function hideFaceRegistrationModal() {
     if (!faceRegistrationModal) {
+        return;
+    }
+    
+    // Check if this is self registration - don't allow closing
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    if (isSelfRegistration) {
+        // Don't allow closing self registration modal
         return;
     }
     
@@ -1880,12 +2064,30 @@ function handleFaceRegistration() {
         faceRegisterBtn.textContent = 'Saving...';
     }
     
+    // Register the face (skip if guest mode)
+    if (appState.currentUser?.isGuest) {
+        updateCaptions('👤 Guest mode: Face not saved. Sign in to save faces.', false);
+        hideFaceRegistrationModal();
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 3000);
+        return;
+    }
+    
+    // Check if this is self registration
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    
     // Register the face
     updateCaptions('💾 Saving face...', false);
-    registerFace(name, notes, currentPendingDetection.detection)
+    registerFace(name, notes, currentPendingDetection.detection, appState.userId, isSelfRegistration)
         .then(async (faceId) => {
-            console.log(`Face registered successfully: ${name} (ID: ${faceId})`);
-            updateCaptions(`✅ Face registered: ${name}`, false);
+            console.log(`Face registered successfully: ${name} (ID: ${faceId}, isSelf: ${isSelfRegistration})`);
+            
+            if (isSelfRegistration) {
+                updateCaptions(`✅ Your face has been registered! Welcome to AccessLens.`, false);
+            } else {
+                updateCaptions(`✅ Face registered: ${name}`, false);
+            }
             
             // Reload known faces from Firebase
             await reloadKnownFaces();
@@ -1893,10 +2095,18 @@ function handleFaceRegistration() {
             // Hide modal
             hideFaceRegistrationModal();
             
-            // Clear message after 2 seconds
-            setTimeout(() => {
-                updateCaptions('', false);
-            }, 2000);
+            // If this was self registration, redirect to dashboard after a short delay
+            if (isSelfRegistration) {
+                sessionStorage.removeItem('registerSelfFace');
+                setTimeout(() => {
+                    window.location.href = '/dashboard.html';
+                }, 2000);
+            } else {
+                // Clear message after 2 seconds
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 2000);
+            }
         })
         .catch(error => {
             console.error('Error registering face:', error);
@@ -2045,7 +2255,6 @@ async function initializeMediaPipeOnStartup() {
             // Enable pinch-to-click (always on)
             try {
                 setPinchToClickEnabled(true);
-                updatePinchClickUI(true);
                 console.log('Pinch-to-click enabled (always on)');
             } catch (error) {
                 console.warn('Failed to enable pinch-to-click:', error);
@@ -2173,8 +2382,6 @@ async function startSignRecognition() {
     try {
         setPinchToClickEnabled(true);
         console.log('Pinch-to-click enabled (always on)');
-        // Update UI to reflect enabled state
-        updatePinchClickUI(true);
     } catch (error) {
         console.warn('Failed to enable pinch-to-click:', error);
     }
@@ -2266,12 +2473,20 @@ function stopFaceRecognition() {
  * Update captions display
  */
 function updateCaptions(text, isInterim = false) {
-    if (!captionsText) return;
+    if (!captionsText || !captionsContainer) return;
     
     if (!text || text.trim() === '') {
         // Hide captions
         captionsText.classList.remove('show', 'interim', 'error');
         captionsText.textContent = '';
+        // Stop tracking
+        speechBubbleTrackingActive = false;
+        stopSpeechBubbleTracking();
+        // Clear position history
+        positionHistory = [];
+        lastMouthPosition = null;
+        // Reset to default position
+        resetCaptionsToDefaultPosition();
         return;
     }
     
@@ -2289,6 +2504,311 @@ function updateCaptions(text, isInterim = false) {
     } else {
         captionsText.classList.remove('interim', 'error');
     }
+    
+    // Position speech bubble near mouth of speaker (if face recognition is enabled and face is detected)
+    // Only position for final results (not interim), and only for actual speech (not system messages)
+    if (appState.features.face.enabled && !isInterim && 
+        !text.includes('⏳') && !text.includes('✅') && !text.includes('❌') && 
+        !text.includes('💾') && !text.includes('👋') && !text.includes('👁️') &&
+        !text.includes('⚠️') && !text.includes('Listening') && text.trim().length > 0) {
+        // Enable speech bubble tracking
+        speechBubbleTrackingActive = true;
+        startSpeechBubbleTracking();
+        // Position speech bubble near mouth immediately when speech is detected
+        positionSpeechBubbleNearMouth();
+    } else {
+        // Disable speech bubble tracking for system messages
+        speechBubbleTrackingActive = false;
+        stopSpeechBubbleTracking();
+        // Clear position history when disabling tracking
+        positionHistory = [];
+        lastMouthPosition = null;
+        // Reset to default position for system messages or when conditions aren't met
+        if (isInterim || text.trim().length === 0 || 
+            text.includes('⏳') || text.includes('✅') || text.includes('❌') || 
+            text.includes('💾') || text.includes('👋') || text.includes('👁️') ||
+            text.includes('⚠️') || text.includes('Listening')) {
+            resetCaptionsToDefaultPosition();
+        }
+    }
+}
+
+/**
+ * Start continuous speech bubble tracking
+ * Updates position whenever face detection updates (every ~1 second)
+ * Uses smooth CSS transitions to follow face movement
+ */
+function startSpeechBubbleTracking() {
+    // Stop any existing tracking
+    stopSpeechBubbleTracking();
+    
+    if (!speechBubbleTrackingActive) {
+        return;
+    }
+    
+    // Update position immediately
+    updateSpeechBubblePosition();
+    
+    // Set up a moderate-frequency update loop for smooth tracking
+    // Update every 50ms (20fps) which is smooth and responsive
+    let lastUpdateTime = 0;
+    const UPDATE_INTERVAL = 50; // Update every 50ms (20fps)
+    
+    function updateLoop(currentTime) {
+        if (!speechBubbleTrackingActive || !captionsContainer || !captionsText || 
+            !captionsText.classList.contains('show') || !appState.features.face.enabled) {
+            speechBubbleTrackingActive = false;
+            return;
+        }
+        
+        // Throttle updates to every 50ms for smoother tracking (20fps)
+        if (currentTime - lastUpdateTime >= UPDATE_INTERVAL) {
+            updateSpeechBubblePosition();
+            lastUpdateTime = currentTime;
+        }
+        
+        speechBubbleUpdateAnimationFrame = requestAnimationFrame(updateLoop);
+    }
+    
+    // Start the loop
+    speechBubbleUpdateAnimationFrame = requestAnimationFrame(updateLoop);
+}
+
+/**
+ * Stop continuous speech bubble tracking
+ */
+function stopSpeechBubbleTracking() {
+    if (speechBubbleUpdateAnimationFrame !== null) {
+        cancelAnimationFrame(speechBubbleUpdateAnimationFrame);
+        speechBubbleUpdateAnimationFrame = null;
+    }
+}
+
+/**
+ * Position speech bubble near the mouth of the primary face
+ */
+function positionSpeechBubbleNearMouth() {
+    updateSpeechBubblePosition();
+}
+
+/**
+ * Update speech bubble position based on current face detection
+ * This is called when speech is detected and also during face updates to track face movement
+ */
+function updateSpeechBubblePosition() {
+    if (!captionsContainer || !captionsText) {
+        return;
+    }
+    
+    try {
+        // Get primary face with detection
+        const primaryFace = getPrimaryFaceWithDetection();
+        
+        if (!primaryFace || !primaryFace.detection) {
+            // No face detected - don't update position (keep bubble where it is)
+            return;
+        }
+        
+        const video = document.getElementById('camera-video');
+        if (!video) {
+            return;
+        }
+        
+        // Get mouth position from face landmarks
+        // The detection object structure from face-api.js:
+        // - detection.landmarks (landmarks object)
+        // - detection.detection.box (face bounding box)
+        // We need to pass the full detection object to getMouthPosition
+        const detection = primaryFace.detection;
+        
+        // Try to get mouth position from landmarks
+        const mouthPos = getMouthPosition(detection, video);
+        
+        if (!mouthPos) {
+            // No mouth position from landmarks - use face box as fallback
+            // The box might be at detection.detection.box or detection.box
+            const box = (detection.detection && detection.detection.box) || detection.box;
+            if (box) {
+                const videoRect = video.getBoundingClientRect();
+                const videoAspect = video.videoWidth / video.videoHeight;
+                const displayAspect = videoRect.width / videoRect.height;
+                
+                let scaleX = 1;
+                let scaleY = 1;
+                let offsetX = 0;
+                let offsetY = 0;
+                
+                if (videoAspect > displayAspect) {
+                    scaleY = videoRect.height / video.videoHeight;
+                    scaleX = scaleY;
+                    offsetX = (videoRect.width - video.videoWidth * scaleX) / 2;
+                } else {
+                    scaleX = videoRect.width / video.videoWidth;
+                    scaleY = scaleX;
+                    offsetY = (videoRect.height - video.videoHeight * scaleY) / 2;
+                }
+                
+                // Use center of face box, at mouth level (approximately 60% down the face)
+                let faceCenterX = videoRect.left + offsetX + (box.x + box.width / 2) * scaleX;
+                const faceCenterY = videoRect.top + offsetY + (box.y + box.height * 0.65) * scaleY; // 65% down = mouth area
+                
+                // Account for camera mirror/flip state
+                // When video is mirrored with CSS (transform: scaleX(-1)), we need to flip the X coordinate
+                if (video.classList.contains('flipped')) {
+                    // Video is mirrored - flip X coordinate relative to video center
+                    faceCenterX = videoRect.left + videoRect.right - faceCenterX;
+                }
+                
+                positionSpeechBubbleAt(faceCenterX, faceCenterY);
+            }
+            return;
+        }
+        
+        // Position speech bubble above the mouth with smoothing
+        const smoothedPos = smoothMouthPosition(mouthPos);
+        
+        // Account for camera mirror/flip state
+        // When video is mirrored with CSS (transform: scaleX(-1)), we need to flip the X coordinate
+        let adjustedX = smoothedPos.x;
+        if (video.classList.contains('flipped')) {
+            // Video is mirrored - flip X coordinate relative to video center
+            const videoRect = video.getBoundingClientRect();
+            // Mirror the X coordinate: distance from left edge becomes distance from right edge
+            adjustedX = videoRect.left + videoRect.right - smoothedPos.x;
+        }
+        
+        positionSpeechBubbleAt(adjustedX, smoothedPos.y);
+        
+    } catch (error) {
+        console.error('Error updating speech bubble position:', error);
+    }
+}
+
+/**
+ * Smooth mouth position to reduce jitter
+ * Uses exponential moving average for smooth tracking
+ * 
+ * @param {Object} newPos - New mouth position { x, y }
+ * @returns {Object} Smoothed position { x, y }
+ */
+function smoothMouthPosition(newPos) {
+    if (!newPos || typeof newPos.x !== 'number' || typeof newPos.y !== 'number') {
+        // Return last known position if new position is invalid
+        return lastMouthPosition || newPos;
+    }
+    
+    // Add to history
+    positionHistory.push({ x: newPos.x, y: newPos.y, timestamp: Date.now() });
+    
+    // Keep only recent positions
+    if (positionHistory.length > MAX_POSITION_HISTORY) {
+        positionHistory.shift();
+    }
+    
+    // Remove old positions (older than 200ms)
+    const now = Date.now();
+    positionHistory = positionHistory.filter(p => now - p.timestamp < 200);
+    
+    if (positionHistory.length === 0) {
+        lastMouthPosition = newPos;
+        return newPos;
+    }
+    
+    // Use weighted average - give more weight to recent positions
+    let totalWeight = 0;
+    let smoothedX = 0;
+    let smoothedY = 0;
+    
+    for (let i = 0; i < positionHistory.length; i++) {
+        const pos = positionHistory[i];
+        // Exponential weighting: more recent = higher weight
+        const age = now - pos.timestamp;
+        const weight = Math.exp(-age / 100); // Decay over 100ms
+        
+        smoothedX += pos.x * weight;
+        smoothedY += pos.y * weight;
+        totalWeight += weight;
+    }
+    
+    if (totalWeight > 0) {
+        smoothedX = smoothedX / totalWeight;
+        smoothedY = smoothedY / totalWeight;
+    } else {
+        smoothedX = newPos.x;
+        smoothedY = newPos.y;
+    }
+    
+    // Update last known position
+    lastMouthPosition = { x: smoothedX, y: smoothedY };
+    
+    return lastMouthPosition;
+}
+
+/**
+ * Position speech bubble at specific screen coordinates
+ * @param {number} x - X coordinate in screen pixels
+ * @param {number} y - Y coordinate in screen pixels
+ */
+function positionSpeechBubbleAt(x, y) {
+    if (!captionsContainer) {
+        return;
+    }
+    
+    // Get container dimensions immediately (don't wait for requestAnimationFrame)
+    const containerRect = captionsContainer.getBoundingClientRect();
+    const containerWidth = containerRect.width > 0 ? containerRect.width : 300;
+    const containerHeight = containerRect.height > 0 ? containerRect.height : 60;
+    
+    // Position bubble above the mouth
+    // Calculate optimal offset based on container size
+    // Place bubble close to mouth but with enough space for readability
+    const offsetAboveMouth = Math.max(containerHeight + 12, 50); // At least 12px gap, min 50px from mouth
+    const bubbleX = x - containerWidth / 2; // Center bubble horizontally on mouth
+    const bubbleY = y - offsetAboveMouth; // Position above mouth
+    
+    // Constrain to viewport (keep bubble visible)
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    const minX = 10;
+    const maxX = viewportWidth - containerWidth - 10;
+    const minY = 10;
+    const maxY = viewportHeight - containerHeight - 10;
+    
+    // If bubble would go off screen, adjust position
+    let constrainedX = Math.max(minX, Math.min(bubbleX, maxX));
+    let constrainedY = Math.max(minY, Math.min(bubbleY, maxY));
+    
+    // If we had to adjust Y position, try to keep it near the face horizontally
+    if (Math.abs(constrainedY - bubbleY) > 10) {
+        // Bubble was constrained vertically - adjust X to stay near face
+        constrainedX = Math.max(minX, Math.min(x - containerWidth / 2, maxX));
+    }
+    
+    // Apply position with smooth transition for smooth following
+    captionsContainer.style.position = 'fixed';
+    captionsContainer.style.left = constrainedX + 'px';
+    captionsContainer.style.top = constrainedY + 'px';
+    captionsContainer.style.transform = 'none';
+    captionsContainer.style.width = 'auto';
+    captionsContainer.style.maxWidth = '400px';
+    captionsContainer.style.transition = 'left 0.08s linear, top 0.08s linear'; // Very responsive, linear for predictability
+    captionsContainer.classList.add('speech-bubble');
+}
+
+/**
+ * Reset captions to default position (bottom center)
+ */
+function resetCaptionsToDefaultPosition() {
+    if (!captionsContainer) return;
+    
+    captionsContainer.style.position = 'fixed';
+    captionsContainer.style.top = '85%';
+    captionsContainer.style.left = '50%';
+    captionsContainer.style.transform = 'translateX(-50%)';
+    captionsContainer.style.width = '90%';
+    captionsContainer.style.maxWidth = '800px';
+    captionsContainer.classList.remove('speech-bubble');
 }
 
 /**
@@ -2382,6 +2902,104 @@ function updateFlipCameraUI() {
 }
 
 /**
+ * Initialize camera flip button (switches between front/back cameras)
+ */
+function initializeCameraFlipButton() {
+    const flipButton = document.getElementById('camera-flip-button');
+    if (!flipButton) {
+        return;
+    }
+    
+    // Hide button initially (will show when cameras are available)
+    flipButton.style.display = 'none';
+    
+    // Add click event listener
+    flipButton.addEventListener('click', async () => {
+        await switchToNextCamera();
+    });
+    
+    // Update button visibility when cameras are available
+    updateCameraFlipButtonVisibility();
+}
+
+/**
+ * Update camera flip button visibility based on available cameras
+ */
+function updateCameraFlipButtonVisibility() {
+    const flipButton = document.getElementById('camera-flip-button');
+    if (!flipButton) {
+        return;
+    }
+    
+    // Show button if we have multiple cameras (mobile devices typically have 2)
+    if (appState.availableCameras && appState.availableCameras.length > 1) {
+        flipButton.style.display = 'flex';
+    } else {
+        flipButton.style.display = 'none';
+    }
+}
+
+/**
+ * Switch to the next available camera (front <-> back)
+ */
+async function switchToNextCamera() {
+    if (!appState.availableCameras || appState.availableCameras.length < 2) {
+        console.warn('Not enough cameras available to switch');
+        return;
+    }
+    
+    const currentCameraId = appState.selectedCameraId;
+    const currentCamera = appState.availableCameras.find(c => c.deviceId === currentCameraId);
+    
+    // Determine if current camera is front or back
+    const isCurrentFront = currentCamera && (
+        currentCamera.label.toLowerCase().includes('front') ||
+        currentCamera.label.toLowerCase().includes('facing') ||
+        currentCamera.label.toLowerCase().includes('user') ||
+        currentCamera.label.toLowerCase().includes('selfie')
+    );
+    
+    // Find the opposite camera
+    let nextCamera = null;
+    if (isCurrentFront) {
+        // Switch to back camera
+        nextCamera = appState.availableCameras.find(c => 
+            c.deviceId !== currentCameraId && (
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('rear') ||
+                c.label.toLowerCase().includes('environment') ||
+                (!c.label.toLowerCase().includes('front') && 
+                 !c.label.toLowerCase().includes('facing') &&
+                 !c.label.toLowerCase().includes('user') &&
+                 !c.label.toLowerCase().includes('selfie'))
+            )
+        );
+    } else {
+        // Switch to front camera
+        nextCamera = appState.availableCameras.find(c => 
+            c.deviceId !== currentCameraId && (
+                c.label.toLowerCase().includes('front') ||
+                c.label.toLowerCase().includes('facing') ||
+                c.label.toLowerCase().includes('user') ||
+                c.label.toLowerCase().includes('selfie')
+            )
+        );
+    }
+    
+    // If we couldn't find the opposite camera by label, just switch to a different one
+    if (!nextCamera) {
+        nextCamera = appState.availableCameras.find(c => c.deviceId !== currentCameraId);
+    }
+    
+    if (nextCamera) {
+        console.log(`Switching camera from ${currentCamera?.label || 'unknown'} to ${nextCamera.label}`);
+        await switchCamera(nextCamera.deviceId);
+    } else {
+        console.warn('Could not find another camera to switch to');
+    }
+}
+
+/**
  * Update camera selector dropdown
  */
 function updateCameraSelector() {
@@ -2445,6 +3063,13 @@ async function switchCamera(deviceId) {
         appState.cameraStream.getTracks().forEach(track => track.stop());
         appState.cameraStream = null;
     }
+    
+    // Reset speech bubble tracking when camera changes
+    // Clear position history to prevent stale coordinates from affecting new camera
+    positionHistory = [];
+    lastMouthPosition = null;
+    speechBubbleTrackingActive = false;
+    stopSpeechBubbleTracking();
     
     // Update selected camera
     appState.selectedCameraId = deviceId;
@@ -2702,17 +3327,9 @@ export const elementClickRegistry = {
         console.log('Pinch click: Toggling camera flip');
         toggleCameraFlip();
     },
-    'toggle-pinch-click': () => {
-        console.log('Pinch click: Toggling pinch-to-click');
-        togglePinchToClick();
-    },
-    'settings-btn': () => {
-        console.log('Pinch click: Opening settings');
-        alert('Settings panel - Coming soon!');
-    },
     'help-btn': () => {
         console.log('Pinch click: Opening help');
-        alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click');
+        alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n\nNote: Hand Detection and Pinch to Click are always enabled when the camera is active.');
     },
     'hand-menu-unlock-button': () => {
         console.log('Pinch click: Unlocking hand menu');

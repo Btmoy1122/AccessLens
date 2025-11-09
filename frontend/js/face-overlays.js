@@ -64,8 +64,21 @@ export function updateFaceOverlay(faceId, faceData, detection, videoElement) {
     }
     
     // Convert video coordinates to screen coordinates
-    const x = videoRect.left + offsetX + (box.x * scaleX);
+    let x = videoRect.left + offsetX + (box.x * scaleX);
     const y = videoRect.top + offsetY + (box.y * scaleY);
+    
+    // Check if camera is flipped/mirrored
+    // When video is flipped with CSS scaleX(-1), we need to mirror the x coordinate
+    const isFlipped = videoElement.classList.contains('flipped');
+    if (isFlipped) {
+        // Calculate x position relative to video element
+        const xRelativeToVideo = x - videoRect.left;
+        // Mirror it: if video width is W and face is at position p from left,
+        // after flipping it should be at (W - p) from left
+        const xFlippedRelativeToVideo = videoRect.width - xRelativeToVideo;
+        // Convert back to screen coordinates
+        x = videoRect.left + xFlippedRelativeToVideo;
+    }
     
     // Get or create overlay element
     let overlay = faceOverlays.get(faceId);

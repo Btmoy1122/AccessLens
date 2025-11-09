@@ -20,10 +20,35 @@ body {
     height: 100vh;
 }
 
+/* Override for auth pages - allow auth.css to take full control */
+body.auth-page {
+    overflow: auto;
+    background: transparent;
+    color: #333;
+}
+
+/* Override for settings and dashboard pages - allow scrolling */
+body.settings-page,
+body.dashboard-page {
+    overflow: auto;
+    background: var(--bg-primary, #121212) !important;
+    color: var(--text-primary, #E0E0E0) !important;
+    height: auto;
+    min-height: 100vh;
+}
+
 html {
     background: #000 !important;
     width: 100%;
     height: 100%;
+}
+
+/* Allow scrolling on settings and dashboard pages */
+html:has(body.settings-page),
+html:has(body.dashboard-page) {
+    background: var(--bg-primary, #121212) !important;
+    height: auto;
+    overflow: auto;
 }
 
 /* Camera Video - Full Screen Background */
@@ -191,6 +216,106 @@ html {
 .hand-menu-toggle .toggle-icon {
     font-size: 28px;
     line-height: 1;
+}
+
+/* Home Page Button - Bottom Left Corner */
+.home-button {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    width: 120px;
+    height: 60px;
+    background: rgba(20, 20, 30, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 2px solid rgba(102, 126, 234, 0.4);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    pointer-events: auto;
+    text-decoration: none;
+}
+
+.home-button:hover {
+    background: rgba(102, 126, 234, 0.3);
+    transform: scale(1.05);
+    border-color: rgba(102, 126, 234, 0.6);
+}
+
+.home-button:active {
+    transform: scale(0.95);
+}
+
+.home-button .home-label {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.home-button .home-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
+/* Camera Flip Button - Bottom Right Corner (for mobile camera switching) */
+.camera-flip-button {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 120px;
+    height: 60px;
+    background: rgba(20, 20, 30, 0.92);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 2px solid rgba(102, 126, 234, 0.4);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    pointer-events: auto;
+}
+
+.camera-flip-button:hover {
+    background: rgba(102, 126, 234, 0.3);
+    transform: scale(1.05);
+    border-color: rgba(102, 126, 234, 0.6);
+}
+
+.camera-flip-button:active {
+    transform: scale(0.95);
+}
+
+.camera-flip-button .flip-label {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.camera-flip-button .flip-icon {
+    font-size: 28px;
+    line-height: 1;
+    transition: transform 0.3s ease;
+}
+
+.camera-flip-button:active .flip-icon {
+    transform: rotate(180deg);
 }
 
 .sidebar-toggle:hover {
@@ -479,6 +604,21 @@ html {
         padding: 10px 12px;
         font-size: 12px;
     }
+
+    .home-button {
+        bottom: 15px;
+        left: 15px;
+        width: 110px;
+        height: 55px;
+    }
+
+    .home-button .home-label {
+        font-size: 11px;
+    }
+
+    .home-button .home-icon {
+        font-size: 26px;
+    }
 }
 
 /* Scrollbar Styling */
@@ -514,6 +654,7 @@ html {
     align-items: center;
     cursor: move; /* Show move cursor */
     user-select: none; /* Prevent text selection while dragging */
+    transition: left 0.15s ease-out, top 0.15s ease-out; /* Faster, smoother movement for speech bubbles */
 }
 
 .captions-container.dragging {
@@ -521,18 +662,24 @@ html {
     transition: none; /* Disable transitions while dragging */
 }
 
+/* Speech bubble style when positioned near face */
+.captions-container.speech-bubble {
+    cursor: default; /* Don't show move cursor for auto-positioned bubbles */
+    pointer-events: none; /* Allow clicks to pass through */
+}
+
 .captions-text {
-    background: rgba(0, 0, 0, 0.75);
+    background: rgba(0, 0, 0, 0.85);
     backdrop-filter: blur(10px);
     color: #fff;
     padding: 16px 24px;
-    border-radius: 12px;
+    border-radius: 16px;
     font-size: 20px;
     font-weight: 500;
     line-height: 1.5;
     text-align: center;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
     min-height: 50px;
     display: flex;
     align-items: center;
@@ -543,6 +690,31 @@ html {
     word-wrap: break-word;
     max-width: 100%;
     pointer-events: none; /* Prevent text from blocking drag */
+    position: relative;
+}
+
+/* Speech bubble tail/pointer when positioned near face */
+.captions-container.speech-bubble .captions-text::after {
+    content: '';
+    position: absolute;
+    bottom: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0;
+    height: 0;
+    border-left: 15px solid transparent;
+    border-right: 15px solid transparent;
+    border-top: 15px solid rgba(0, 0, 0, 0.85);
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+    z-index: 501;
+    pointer-events: none;
+}
+
+/* Make sure speech bubble is visible and styled properly */
+.captions-container.speech-bubble .captions-text {
+    background: rgba(0, 0, 0, 0.9) !important;
+    border: 2px solid rgba(255, 255, 255, 0.3) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7) !important;
 }
 
 .captions-text.show {
@@ -1196,6 +1368,24 @@ button:focus-visible {
 
 .hand-menu-prompt.hidden {
     display: none;
+}
+
+/* Mobile styles for camera flip button */
+@media (max-width: 768px) {
+    .camera-flip-button {
+        width: 100px;
+        height: 50px;
+        bottom: 15px;
+        right: 15px;
+    }
+    
+    .camera-flip-button .flip-icon {
+        font-size: 24px;
+    }
+    
+    .camera-flip-button .flip-label {
+        font-size: 11px;
+    }
 }
 
 /* Responsive modal */

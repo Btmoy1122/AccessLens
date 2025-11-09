@@ -13,11 +13,10 @@
 
 ### MediaPipe Hands
 - **Location**: `ml/sign-language/sign-recognition.js`
-- **Purpose**: Hand landmark detection for sign language
+- **Purpose**: Hand landmark detection for gesture controls (pinch-to-click, hand menu)
 
 ### TensorFlow.js
-- **COCO-SSD**: Object detection
-- **Custom Models**: Sign language classification
+- **COCO-SSD**: Object detection for scene description
 
 ### face-api.js
 - **Location**: `ml/vision/face-recognition.js`

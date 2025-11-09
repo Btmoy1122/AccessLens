@@ -44,7 +44,7 @@ Open `http://localhost:5173` in your browser (Vite default port).
 
 ### ML Development
 - Speech recognition: `ml/speech/`
-- Sign language: `ml/sign-language/`
+- Hand gesture controls: `ml/sign-language/` (MediaPipe for hand detection)
 - Face recognition: `ml/vision/face-recognition.js`
 - Scene description: `ml/vision/scene-description.js`
 

@@ -26,7 +26,13 @@ const firebaseConfig = {
 
 // Validate that required config values are present
 if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
-    console.warn('Firebase configuration is incomplete. Please check your environment variables.');
+    console.error('Firebase configuration is incomplete. Please check your environment variables.');
+    console.error('Missing values:', {
+        apiKey: !firebaseConfig.apiKey,
+        projectId: !firebaseConfig.projectId
+    });
+    console.error('Make sure you have a .env file with VITE_FIREBASE_API_KEY and other required variables.');
+    // Don't throw error - allow guest mode to work without Firebase
 }
 
 export default firebaseConfig;

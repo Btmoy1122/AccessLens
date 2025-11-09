@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AccessLens - Welcome</title>
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+    <link rel="alternate icon" href="/icons/favicon.svg">
+    
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Pico.css - Dark Mode -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/styles/main.css">
+    <link rel="stylesheet" href="/styles/auth.css">
+    <link rel="stylesheet" href="/styles/theme.css">
+</head>
+<body class="auth-page">
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="auth-header">
+                <h1 class="auth-title">AccessLens</h1>
+                <p class="auth-subtitle">AR Accessibility Assistant</p>
+            </div>
+            
+            <div class="auth-content">
+                <p class="auth-description">
+                    Real-time AR-powered accessibility tool for visual, hearing, and speech impairments
+                </p>
+                
+                <div class="auth-actions">
+                    <button id="google-signin-btn" class="btn-auth btn-google">
+                        <i data-lucide="chrome" class="btn-icon"></i>
+                        <span>Sign in with Google</span>
+                    </button>
+                    
+                    <div class="auth-divider">
+                        <span>or</span>
+                    </div>
+                    
+                    <form id="email-auth-form" class="auth-form">
+                        <div class="form-group">
+                            <input type="email" id="email-input" placeholder="Email" required>
+                        </div>
+                        <div class="form-group">
+                            <input type="password" id="password-input" placeholder="Password" required>
+                        </div>
+                        <button type="submit" class="btn-auth btn-primary">Sign In</button>
+                    </form>
+                    
+                    <button id="create-account-btn" class="btn-link">Create Account</button>
+                    
+                    <div class="auth-divider">
+                        <span>or</span>
+                    </div>
+                    
+                    <button id="guest-btn" class="btn-auth btn-guest">
+                        <i data-lucide="user" class="btn-icon"></i>
+                        <span>Continue as Guest</span>
+                    </button>
+                </div>
+                
+                <div id="auth-error" class="auth-error" style="display: none;"></div>
+                <div id="auth-loading" class="auth-loading" style="display: none;">
+                    <p>Signing in...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script type="module" src="/js/auth.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+</body>
+</html>
+

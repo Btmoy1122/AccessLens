@@ -16,15 +16,15 @@
  */
 
 import * as faceapi from '@vladmandic/face-api';
-import { getAllFaces, addFace } from '@backend/services/face-service.js';
+import { getFacesByUser, addFace } from '@backend/services/face-service.js';
 
 // Configuration constants
-const DETECTION_INTERVAL_MS = 2000; // Run detection every 2 seconds
+const DETECTION_INTERVAL_MS = 500; // Run detection every 500ms for much smoother tracking
 const RECOGNITION_THRESHOLD = 0.55; // Stricter threshold (0.55) - reduces false positives
 const RELAXED_RECOGNITION_THRESHOLD = 0.62; // More lenient threshold for position-matched faces (angle tolerance)
-const MIN_FACE_SIZE = 50; // Minimum face size in pixels
+const MIN_FACE_SIZE = 25; // Minimum face size in pixels (reduced from 50 to detect faces from farther away)
 const FACE_TRACKING_DISTANCE_THRESHOLD = 80; // Pixels - faces closer than this are considered the same (reduced for better separation)
-const MIN_CONFIDENCE_FOR_REGISTRATION = 0.75; // Only register high-confidence detections
+const MIN_CONFIDENCE_FOR_REGISTRATION = 0.65; // Lowered from 0.75 to allow registration of smaller/distant faces
 const RECOGNIZED_FACE_CACHE_TIMEOUT = 6000; // Keep recognized faces in cache for 6 seconds (increased for angle tolerance)
 const UNKNOWN_FACE_BUFFER_TIME_MS = 4000; // Wait 4 seconds before prompting for unknown face registration
 // Removed MIN_DISTANCE_BETWEEN_FACES - using position-based deduplication in detection loop
@@ -39,6 +39,7 @@ let recognizedFacesCache = new Map(); // Cache of currently recognized faces
 let pendingRegistration = null; // Face waiting to be registered
 let unknownFacesBuffer = new Map(); // Track unknown faces with timestamps for confidence buffer
 // Key: faceKey, Value: { firstSeen: timestamp, detection: detection, lastSeen: timestamp }
+let currentUserId = 'default'; // Current user ID for face operations
 
 // Callback functions
 let onFaceRecognizedCallback = null;
@@ -228,6 +229,242 @@ export function getPrimaryFaceOnScreen() {
 }
 
 /**
+ * Get the primary face with detection (including landmarks) for speech bubble positioning
+ * Returns the largest/most prominent face on screen, whether recognized or not
+ * This allows speech bubbles to follow any detected face, not just recognized ones
+ * 
+ * @returns {Object|null} Face object with { faceId, name, faceKey, detection } or null
+ */
+export function getPrimaryFaceWithDetection() {
+    // Get all active faces (recognized and unknown) for speech bubble tracking
+    // This allows tracking of any detected face, not just recognized ones
+    const activeFaces = getAllActiveFaces();
+    
+    if (activeFaces.length === 0) {
+        return null;
+    }
+    
+    // If only one face, return it with detection
+    if (activeFaces.length === 1) {
+        const face = activeFaces[0];
+        return {
+            faceId: face.faceData?.id || null,
+            name: face.faceData?.name || 'Unknown',
+            faceKey: face.faceKey,
+            detection: face.detection
+        };
+    }
+    
+    // Multiple faces - find the largest one (most prominent)
+    let largestFace = null;
+    let largestSize = 0;
+    
+    for (const face of activeFaces) {
+        if (face.detection && face.detection.detection && face.detection.detection.box) {
+            const box = face.detection.detection.box;
+            const size = box.width * box.height;
+            
+            if (size > largestSize) {
+                largestSize = size;
+                largestFace = face;
+            }
+        }
+    }
+    
+    if (largestFace) {
+        return {
+            faceId: largestFace.faceData?.id || null,
+            name: largestFace.faceData?.name || 'Unknown',
+            faceKey: largestFace.faceKey,
+            detection: largestFace.detection
+        };
+    }
+    
+    // Fallback: return first active face
+    const firstFace = activeFaces[0];
+    return {
+        faceId: firstFace.faceData?.id || null,
+        name: firstFace.faceData?.name || 'Unknown',
+        faceKey: firstFace.faceKey,
+        detection: firstFace.detection
+    };
+}
+
+/**
+ * Get mouth position from face detection landmarks
+ * Face-api.js provides 68 landmarks:
+ * - Points 48-67 are mouth landmarks
+ * - Point 62 is approximately the center bottom of the upper lip (mouth center)
+ * 
+ * @param {Object} detection - Face detection object with landmarks
+ * @param {HTMLVideoElement} videoElement - Video element for coordinate conversion
+ * @returns {Object|null} Mouth position { x, y } in screen coordinates or null
+ */
+export function getMouthPosition(detection, videoElement) {
+    if (!detection || !videoElement) {
+        return null;
+    }
+    
+    try {
+        // face-api.js detection structure from @vladmandic/face-api:
+        // The detection object has: detection.landmarks
+        // landmarks.positions is an array of 68 point objects with {x, y} properties
+        // Mouth landmarks are indices 48-67 (20 points)
+        // We want the center of the mouth opening for speech bubbles
+        
+        let landmarks = null;
+        let mouthPoints = null;
+        
+        // Check if landmarks exist on the detection object
+        // face-api.js detection structure: detection.landmarks.positions
+        if (!detection.landmarks) {
+            return null;
+        }
+        
+        landmarks = detection.landmarks;
+        
+        // @vladmandic/face-api structure: landmarks.positions is an array of 68 points
+        if (!landmarks.positions || !Array.isArray(landmarks.positions)) {
+            return null;
+        }
+        
+        if (landmarks.positions.length < 68) {
+            return null;
+        }
+        
+        // Get mouth landmarks
+        // Points 48-67: Outer mouth (lips outline)
+        // Points 60-67: Inner mouth (mouth opening) - MORE ACCURATE for center
+        // Points 61, 63, 65, 67: Top, right, bottom, left of inner mouth
+        // Point 62, 66: Left and right corners of inner mouth
+        
+        // Use INNER mouth points (60-67) for more accurate center
+        // These represent the actual mouth opening, not just the lips
+        const innerMouthIndices = [60, 61, 62, 63, 64, 65, 66, 67]; // 8 points for inner mouth
+        const outerMouthIndices = [48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]; // Outer lips
+        
+        // Try inner mouth first (more accurate)
+        mouthPoints = innerMouthIndices.map(idx => landmarks.positions[idx]).filter(p => p != null);
+        
+        // If inner mouth points aren't valid, fall back to outer mouth
+        if (mouthPoints.length === 0) {
+            mouthPoints = outerMouthIndices.map(idx => landmarks.positions[idx]).filter(p => p != null);
+        }
+        
+        // If still no points, try all mouth points (48-67)
+        if (mouthPoints.length === 0) {
+            mouthPoints = landmarks.positions.slice(48, 68).filter(p => p != null);
+        }
+        
+        if (mouthPoints.length === 0) {
+            return null;
+        }
+        
+        // Calculate mouth center using weighted average
+        // Give more weight to center points (61, 63, 65) which are more stable
+        let mouthCenterX = 0;
+        let mouthCenterY = 0;
+        let totalWeight = 0;
+        
+        for (let i = 0; i < mouthPoints.length; i++) {
+            const point = mouthPoints[i];
+            if (!point) continue;
+            
+            // Extract x, y coordinates
+            let x = null;
+            let y = null;
+            
+            if (point && typeof point === 'object') {
+                // Try different property names
+                x = point.x !== undefined ? point.x : (point._x !== undefined ? point._x : null);
+                y = point.y !== undefined ? point.y : (point._y !== undefined ? point._y : null);
+                
+                // Some versions use getX() and getY() methods
+                if (x === null && typeof point.getX === 'function') {
+                    x = point.getX();
+                }
+                if (y === null && typeof point.getY === 'function') {
+                    y = point.getY();
+                }
+            } else if (Array.isArray(point) && point.length >= 2) {
+                x = point[0];
+                y = point[1];
+            }
+            
+            if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y) && isFinite(x) && isFinite(y)) {
+                // Weight center points more heavily for stability
+                // Points in the middle of the array are typically center points
+                const weight = 1.0 + (0.5 * (1 - Math.abs(i - mouthPoints.length / 2) / (mouthPoints.length / 2)));
+                mouthCenterX += x * weight;
+                mouthCenterY += y * weight;
+                totalWeight += weight;
+            }
+        }
+        
+        if (totalWeight === 0) {
+            return null;
+        }
+        
+        mouthCenterX = mouthCenterX / totalWeight;
+        mouthCenterY = mouthCenterY / totalWeight;
+        
+        const mouthLandmark = { x: mouthCenterX, y: mouthCenterY };
+        
+        // Convert video coordinates to screen coordinates
+        // This accounts for video scaling and letterboxing
+        const videoRect = videoElement.getBoundingClientRect();
+        
+        // Get actual video dimensions (may differ from displayed size)
+        const videoWidth = videoElement.videoWidth;
+        const videoHeight = videoElement.videoHeight;
+        
+        if (!videoWidth || !videoHeight) {
+            // Video not ready yet
+            return null;
+        }
+        
+        // Calculate aspect ratios
+        const videoAspect = videoWidth / videoHeight;
+        const displayAspect = videoRect.width / videoRect.height;
+        
+        let scaleX = 1;
+        let scaleY = 1;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        // Calculate scaling and offsets based on how video is fitted
+        if (videoAspect > displayAspect) {
+            // Video is wider than display - letterboxed vertically (black bars top/bottom)
+            scaleY = videoRect.height / videoHeight;
+            scaleX = scaleY; // Maintain aspect ratio
+            offsetX = (videoRect.width - videoWidth * scaleX) / 2;
+            offsetY = 0;
+        } else {
+            // Video is taller than display - letterboxed horizontally (black bars left/right)
+            scaleX = videoRect.width / videoWidth;
+            scaleY = scaleX; // Maintain aspect ratio
+            offsetX = 0;
+            offsetY = (videoRect.height - videoHeight * scaleY) / 2;
+        }
+        
+        // Convert landmark coordinates from video space to screen space
+        // Mouth landmark coordinates are in video pixel space (0 to videoWidth/videoHeight)
+        const screenX = videoRect.left + offsetX + (mouthLandmark.x * scaleX);
+        const screenY = videoRect.top + offsetY + (mouthLandmark.y * scaleY);
+        
+        // Validate coordinates are within reasonable bounds
+        if (!isFinite(screenX) || !isFinite(screenY) || isNaN(screenX) || isNaN(screenY)) {
+            return null;
+        }
+        
+        return { x: screenX, y: screenY };
+    } catch (error) {
+        console.error('Error getting mouth position:', error);
+        return null;
+    }
+}
+
+/**
  * Start face recognition.
  * Begins the detection loop that processes video frames and recognizes faces.
  */
@@ -299,9 +536,11 @@ async function recognitionLoop() {
     try {
         // Detect faces in the current video frame
         // Use @vladmandic/face-api detection API
+        // Increased inputSize to 512 (max) for better small face detection at distance
+        // Lowered scoreThreshold to detect lower confidence (smaller/distant) faces
         const options = new faceapi.TinyFaceDetectorOptions({ 
-            inputSize: 320,
-            scoreThreshold: 0.5 
+            inputSize: 512, // Increased from 320 to 512 for better small face detection
+            scoreThreshold: 0.4 // Lowered from 0.5 to detect smaller/distant faces (more sensitive)
         });
         
         const detections = await faceapi
@@ -309,12 +548,14 @@ async function recognitionLoop() {
             .withFaceLandmarks()
             .withFaceDescriptors();
         
-        // Filter out small faces
+        // Filter out very small faces (but keep smaller faces for better range)
+        // MIN_FACE_SIZE is now 25px to allow detection from farther away
         const validDetections = detections.filter(detection => {
             if (!detection.detection || !detection.detection.box) {
                 return false;
             }
             const box = detection.detection.box;
+            // Allow faces as small as MIN_FACE_SIZE (25px) for better range
             return box.width >= MIN_FACE_SIZE && box.height >= MIN_FACE_SIZE;
         });
         
@@ -524,9 +765,10 @@ function handleRecognizedFace(faceData, detection) {
     
     if (!existing) {
         // New recognition - add to cache
+        // Update cache with latest detection (including fresh landmarks)
         recognizedFacesCache.set(faceKey, {
             faceData: faceData,
-            detection: detection,
+            detection: detection, // Store the full detection object with landmarks
             lastSeen: Date.now(),
             faceKey: faceKey,
             faceId: faceData.id || `recognized_${Date.now()}`
@@ -545,8 +787,9 @@ function handleRecognizedFace(faceData, detection) {
         // Clear this face from unknown faces buffer (it's now recognized)
         clearUnknownFaceFromBuffer(faceKey);
         // Update existing face - same person, just updating position
+        // IMPORTANT: Update detection with fresh landmarks for speech bubble tracking
         existing.lastSeen = Date.now();
-        existing.detection = detection; // Update detection with new position
+        existing.detection = detection; // Update detection with new position AND fresh landmarks
         existing.faceData = faceData; // Update face data
         
         // Important: Keep the same key to maintain overlay continuity
@@ -805,26 +1048,49 @@ function cleanupRecognizedFacesCache(currentDetections) {
 }
 
 /**
+ * Set the current user ID for face operations.
+ * 
+ * @param {string} userId - User ID
+ */
+export function setUserId(userId) {
+    currentUserId = userId || 'default';
+    console.log('Face recognition userId set to:', currentUserId);
+}
+
+/**
+ * Get the current user ID.
+ * 
+ * @returns {string} Current user ID
+ */
+export function getUserId() {
+    return currentUserId;
+}
+
+/**
  * Register a new face.
  * Saves the face to Firebase and adds it to known faces.
  * 
  * @param {string} name - Name of the person
  * @param {string} notes - Additional notes about the person
  * @param {Object} detection - Face detection object with descriptor
+ * @param {string} [userId] - Optional user ID (defaults to currentUserId)
  * @returns {Promise<string>} Document ID of the saved face
  */
-export async function registerFace(name, notes, detection) {
+export async function registerFace(name, notes, detection, userId = null, isSelf = false) {
     try {
         if (!detection || !detection.descriptor) {
             throw new Error('Invalid detection: missing descriptor');
         }
+        
+        const faceUserId = userId || currentUserId;
         
         // Save to Firebase
         const faceId = await addFace({
             name: name,
             notes: notes || '',
             embedding: detection.descriptor,
-            userId: 'default' // TODO: Get from app state or auth
+            userId: faceUserId,
+            isSelf: isSelf
         });
         
         // Add to known faces array
@@ -833,7 +1099,8 @@ export async function registerFace(name, notes, detection) {
             name: name,
             notes: notes || '',
             embedding: detection.descriptor,
-            userId: 'default'
+            userId: faceUserId,
+            isSelf: isSelf
         };
         
         knownFaces.push(newFace);
@@ -841,7 +1108,7 @@ export async function registerFace(name, notes, detection) {
         // Clear pending registration
         pendingRegistration = null;
         
-        console.log(`Face registered: ${name} (ID: ${faceId})`);
+        console.log(`Face registered: ${name} (ID: ${faceId}, User: ${faceUserId}, isSelf: ${isSelf})`);
         return faceId;
     } catch (error) {
         console.error('Error registering face:', error);
@@ -851,14 +1118,29 @@ export async function registerFace(name, notes, detection) {
 
 /**
  * Load known faces from Firebase.
+ * Filters faces by current user ID.
  * 
  * @returns {Promise<void>}
  */
 async function loadKnownFaces() {
     try {
         console.log('Loading known faces from Firebase...');
-        knownFaces = await getAllFaces();
-        console.log(`Loaded ${knownFaces.length} known faces`);
+        
+        // Get faces for current user (server-side filtered)
+        knownFaces = await getFacesByUser(currentUserId);
+        
+        // Also load 'default' faces for backward compatibility if needed
+        // (Only if currentUserId is not 'default' to avoid duplicate loading)
+        if (currentUserId !== 'default') {
+            try {
+                const defaultFaces = await getFacesByUser('default');
+                knownFaces = [...knownFaces, ...defaultFaces];
+            } catch (error) {
+                console.warn('Could not load default faces:', error);
+            }
+        }
+        
+        console.log(`Loaded ${knownFaces.length} known faces for user: ${currentUserId}`);
     } catch (error) {
         console.error('Error loading known faces:', error);
         knownFaces = [];
@@ -917,6 +1199,26 @@ export function getAllActiveFaces() {
             detection: pendingRegistration.detection,
             isRecognized: false
         });
+    }
+    
+    // Also add faces from unknown buffer (recently detected but not yet recognized)
+    // This ensures speech bubbles can track faces even if they're not recognized yet
+    const now = Date.now();
+    for (const [key, unknownFace] of unknownFacesBuffer.entries()) {
+        // Only include faces that were seen recently (within last 2 seconds)
+        // This prevents stale faces from being tracked
+        if (unknownFace.detection && (now - unknownFace.lastSeen < 2000)) {
+            // Check if this face is already in the faces array (as recognized or pending)
+            const alreadyAdded = faces.some(f => f.faceKey === key);
+            if (!alreadyAdded) {
+                faces.push({
+                    faceKey: key,
+                    faceData: { name: 'Unknown', notes: '' },
+                    detection: unknownFace.detection,
+                    isRecognized: false
+                });
+            }
+        }
     }
     
     return faces;
