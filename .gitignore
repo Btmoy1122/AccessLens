@@ -22,6 +22,7 @@ firebase-debug.log
 firestore-debug.log
 .firebaserc
 firebase.json
+backend/config/firebase-config.js
 
 # Functions environment variables (local development)
 functions/.env

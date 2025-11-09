@@ -1191,11 +1191,9 @@ button:focus-visible {
     transition: all 0.2s ease;
 }
 
+/* Hide outline when menu is locked */
 .quadrilateral-path.locked {
-    fill: rgba(81, 207, 102, 0.2);
-    stroke: rgba(81, 207, 102, 0.8);
-    stroke-width: 0.015;
-    stroke-dasharray: 0.03, 0.01;
+    display: none;
 }
 
 .hand-menu-buttons {
@@ -1233,6 +1231,9 @@ button:focus-visible {
     text-align: center;
     white-space: nowrap;
     overflow: hidden;
+    /* Initial state for pop-in animation */
+    opacity: 0;
+    transform: scale(0.5);
     text-overflow: ellipsis;
 }
 
@@ -1286,6 +1287,9 @@ button:focus-visible {
     transition: all 0.3s ease;
     grid-column: 1 / -1; /* Span full width of grid */
     width: 100%;
+    /* Initial state for pop-in animation */
+    opacity: 0;
+    transform: scale(0.5);
 }
 
 .hand-menu-lock-indicator.locked {
@@ -1321,6 +1325,9 @@ button:focus-visible {
     min-height: 60px;
     text-align: center;
     margin-bottom: 12px;
+    /* Initial state for pop-in animation */
+    opacity: 0;
+    transform: scale(0.5);
     width: 100%;
     grid-column: 1 / -1; /* Span full width of grid */
 }
