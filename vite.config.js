@@ -14,6 +14,9 @@ export default defineConfig({
   // Root directory - frontend folder contains our main application
   root: 'frontend',
   
+  // Load environment variables from project root
+  envDir: '..',
+  
   // Development server configuration
   server: {
     port: 5173,
