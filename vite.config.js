@@ -36,6 +36,16 @@ export default defineConfig({
     minify: 'esbuild',
     // Increase chunk size warning limit for MediaPipe (large files)
     chunkSizeWarningLimit: 1000,
+    commonjsOptions: {
+      // MediaPipe uses CommonJS - need to handle it properly
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+      // Preserve MediaPipe module structure
+      esmExternals: (id) => {
+        // Don't externalize MediaPipe - bundle it but preserve structure
+        return false;
+      }
+    },
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'frontend/index.html'),
@@ -43,12 +53,11 @@ export default defineConfig({
         dashboard: path.resolve(__dirname, 'frontend/dashboard.html'),
         settings: path.resolve(__dirname, 'frontend/settings.html'),
       },
-      // Don't bundle MediaPipe - let it load from CDN in production
-      external: (id) => {
-        // Externalize MediaPipe packages - they need to load from CDN
-        // This prevents bundling issues and allows CDN fallback
-        return false; // We'll handle MediaPipe via CDN in the code
+      output: {
+        format: 'es',
       },
+      // Don't externalize MediaPipe - let it be bundled
+      // MediaPipe will be loaded dynamically at runtime, which handles both dev and prod
     },
   },
   
@@ -69,7 +78,13 @@ export default defineConfig({
   // Note: aframe and ar.js removed since they're not currently used
   // Add them back when AR features are implemented
   optimizeDeps: {
-    // include: ['aframe', 'ar.js'], // Commented out - not installed yet
+    // Include MediaPipe for pre-bundling in dev, but it will be bundled in production
+    include: ['@mediapipe/hands'],
+    // Force optimization to handle CommonJS
+    esbuildOptions: {
+      // MediaPipe uses CommonJS - need to handle it
+      target: 'es2020',
+    },
   },
 });
 
