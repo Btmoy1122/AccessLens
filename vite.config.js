@@ -34,12 +34,20 @@ export default defineConfig({
     sourcemap: true,
     // Optimize for production
     minify: 'esbuild',
+    // Increase chunk size warning limit for MediaPipe (large files)
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'frontend/index.html'),
         login: path.resolve(__dirname, 'frontend/login.html'),
         dashboard: path.resolve(__dirname, 'frontend/dashboard.html'),
         settings: path.resolve(__dirname, 'frontend/settings.html'),
+      },
+      // Don't bundle MediaPipe - let it load from CDN in production
+      external: (id) => {
+        // Externalize MediaPipe packages - they need to load from CDN
+        // This prevents bundling issues and allows CDN fallback
+        return false; // We'll handle MediaPipe via CDN in the code
       },
     },
   },

@@ -10,7 +10,6 @@ import { getFacesByUser, deleteFace } from '@backend/services/face-service.js';
 // DOM Elements
 const accessibilityProfile = document.getElementById('accessibility-profile');
 const featureSpeech = document.getElementById('feature-speech');
-const featureSign = document.getElementById('feature-sign');
 const featureScene = document.getElementById('feature-scene');
 const featureFace = document.getElementById('feature-face');
 const fontSize = document.getElementById('font-size');
@@ -97,7 +96,6 @@ function populateSettingsForm(prefs) {
     
     // Feature preferences
     if (featureSpeech) featureSpeech.checked = prefs.enabledFeatures?.speech !== false;
-    if (featureSign) featureSign.checked = prefs.enabledFeatures?.sign !== false;
     if (featureScene) featureScene.checked = prefs.enabledFeatures?.scene !== false;
     if (featureFace) featureFace.checked = prefs.enabledFeatures?.face !== false;
     
@@ -219,7 +217,6 @@ if (saveSettingsBtn) {
                 accessibilityProfile: accessibilityProfile?.value || null,
                 enabledFeatures: {
                     speech: featureSpeech?.checked !== false,
-                    sign: featureSign?.checked !== false,
                     scene: featureScene?.checked !== false,
                     face: featureFace?.checked !== false
                 },
