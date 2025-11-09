@@ -12,6 +12,11 @@ import {
     setCaptionCallback,
     setAppState 
 } from '@ml/speech/speech-to-text.js';
+import {
+    initVoiceCommands,
+    setCommandCallbacks,
+    processVoiceCommand
+} from '@ml/speech/voice-commands.js';
 import { 
     initSignRecognition,
     startDetection,
@@ -84,6 +89,34 @@ let currentPendingDetection = null; // Stores detection data for pending registr
 document.addEventListener('DOMContentLoaded', () => {
     try {
         console.log('AccessLens initialized');
+        
+        // Suppress WebGL errors on Mac - they're expected and handled gracefully
+        if (navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
+            // Override global error handler to suppress WebGL errors
+            const originalErrorHandler = window.onerror;
+            window.onerror = function(msg, url, line, col, error) {
+                const errorMsg = msg || (error && error.message) || '';
+                // Suppress WebGL canvas context errors on Mac
+                if (errorMsg.includes('WebGL') || errorMsg.includes('canvas context')) {
+                    console.warn('Suppressed WebGL error (Mac compatibility):', errorMsg);
+                    return true; // Prevent default error handling
+                }
+                // Call original error handler for other errors
+                if (originalErrorHandler) {
+                    return originalErrorHandler.call(this, msg, url, line, col, error);
+                }
+                return false;
+            };
+            
+            // Also catch unhandled promise rejections
+            window.addEventListener('unhandledrejection', function(event) {
+                const errorMsg = event.reason && (event.reason.message || event.reason.toString()) || '';
+                if (errorMsg.includes('WebGL') || errorMsg.includes('canvas context')) {
+                    console.warn('Suppressed WebGL promise rejection (Mac compatibility):', errorMsg);
+                    event.preventDefault(); // Prevent default error handling
+                }
+            });
+        }
         
         // Ensure body has black background
         document.body.style.backgroundColor = '#000';
@@ -225,6 +258,14 @@ function initializeSidebar() {
  */
 function toggleSidebar() {
     appState.sidebarOpen = !appState.sidebarOpen;
+    updateSidebarState();
+}
+
+/**
+ * Open sidebar
+ */
+function openSidebar() {
+    appState.sidebarOpen = true;
     updateSidebarState();
 }
 
@@ -676,12 +717,65 @@ function initializeSpeechToText() {
         return;
     }
     
-    // Set up caption callback
-    setCaptionCallback((text, isInterim) => {
-        updateCaptions(text, isInterim);
+    // Initialize voice commands
+    initVoiceCommands();
+    
+    // Set up voice command callbacks
+    setCommandCallbacks({
+        openMenu: () => {
+            console.log('Voice command: Open menu');
+            openSidebar();
+        },
+        closeMenu: () => {
+            console.log('Voice command: Close menu');
+            closeSidebar();
+        },
+        toggleMenu: () => {
+            console.log('Voice command: Toggle menu');
+            toggleSidebar();
+        },
+        toggleSpeech: () => {
+            console.log('Voice command: Toggle speech');
+            toggleFeature('speech');
+        },
+        toggleSign: () => {
+            console.log('Voice command: Toggle sign language');
+            toggleFeature('sign');
+        },
+        toggleScene: () => {
+            console.log('Voice command: Toggle scene description');
+            toggleFeature('scene');
+        },
+        toggleFace: () => {
+            console.log('Voice command: Toggle face recognition');
+            toggleFeature('face');
+        },
+        showHelp: () => {
+            console.log('Voice command: Show help');
+            // Show help dialog or list available commands
+            const commands = [
+                'Open menu', 'Close menu', 'Toggle menu',
+                'Enable speech', 'Enable sign language', 
+                'Enable scene description', 'Enable face recognition'
+            ];
+            alert(`Available Voice Commands:\n\n${commands.join('\n')}`);
+        }
     });
     
-    console.log('Speech-to-text module initialized');
+    // Set up caption callback with voice command processing
+    setCaptionCallback((text, isInterim) => {
+        updateCaptions(text, isInterim);
+        
+        // Process voice commands from final (non-interim) text
+        if (!isInterim && text && text.trim()) {
+            const commandExecuted = processVoiceCommand(text);
+            if (commandExecuted) {
+                console.log('Voice command executed:', text);
+            }
+        }
+    });
+    
+    console.log('Speech-to-text module initialized with voice commands');
 }
 
 /**
