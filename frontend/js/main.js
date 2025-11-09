@@ -234,6 +234,9 @@ function initializeApp() {
         // Initialize camera flip toggle
         initializeCameraFlip();
         
+        // Initialize camera flip button (for switching between front/back cameras)
+        initializeCameraFlipButton();
+        
     // Initialize camera selector (will be populated after cameras are enumerated)
     initializeCameraSelector();
     
@@ -657,6 +660,9 @@ async function enumerateCameras(skipPermissionCheck = false) {
         
         // Update camera selector UI
         updateCameraSelector();
+        
+        // Update camera flip button visibility
+        updateCameraFlipButtonVisibility();
         
         return videoDevices;
     } catch (error) {
@@ -2566,6 +2572,104 @@ function updateFlipCameraUI() {
     // Update hand menu button states to reflect the change
     if (typeof updateAllHandMenuButtonStates === 'function') {
         updateAllHandMenuButtonStates();
+    }
+}
+
+/**
+ * Initialize camera flip button (switches between front/back cameras)
+ */
+function initializeCameraFlipButton() {
+    const flipButton = document.getElementById('camera-flip-button');
+    if (!flipButton) {
+        return;
+    }
+    
+    // Hide button initially (will show when cameras are available)
+    flipButton.style.display = 'none';
+    
+    // Add click event listener
+    flipButton.addEventListener('click', async () => {
+        await switchToNextCamera();
+    });
+    
+    // Update button visibility when cameras are available
+    updateCameraFlipButtonVisibility();
+}
+
+/**
+ * Update camera flip button visibility based on available cameras
+ */
+function updateCameraFlipButtonVisibility() {
+    const flipButton = document.getElementById('camera-flip-button');
+    if (!flipButton) {
+        return;
+    }
+    
+    // Show button if we have multiple cameras (mobile devices typically have 2)
+    if (appState.availableCameras && appState.availableCameras.length > 1) {
+        flipButton.style.display = 'flex';
+    } else {
+        flipButton.style.display = 'none';
+    }
+}
+
+/**
+ * Switch to the next available camera (front <-> back)
+ */
+async function switchToNextCamera() {
+    if (!appState.availableCameras || appState.availableCameras.length < 2) {
+        console.warn('Not enough cameras available to switch');
+        return;
+    }
+    
+    const currentCameraId = appState.selectedCameraId;
+    const currentCamera = appState.availableCameras.find(c => c.deviceId === currentCameraId);
+    
+    // Determine if current camera is front or back
+    const isCurrentFront = currentCamera && (
+        currentCamera.label.toLowerCase().includes('front') ||
+        currentCamera.label.toLowerCase().includes('facing') ||
+        currentCamera.label.toLowerCase().includes('user') ||
+        currentCamera.label.toLowerCase().includes('selfie')
+    );
+    
+    // Find the opposite camera
+    let nextCamera = null;
+    if (isCurrentFront) {
+        // Switch to back camera
+        nextCamera = appState.availableCameras.find(c => 
+            c.deviceId !== currentCameraId && (
+                c.label.toLowerCase().includes('back') ||
+                c.label.toLowerCase().includes('rear') ||
+                c.label.toLowerCase().includes('environment') ||
+                (!c.label.toLowerCase().includes('front') && 
+                 !c.label.toLowerCase().includes('facing') &&
+                 !c.label.toLowerCase().includes('user') &&
+                 !c.label.toLowerCase().includes('selfie'))
+            )
+        );
+    } else {
+        // Switch to front camera
+        nextCamera = appState.availableCameras.find(c => 
+            c.deviceId !== currentCameraId && (
+                c.label.toLowerCase().includes('front') ||
+                c.label.toLowerCase().includes('facing') ||
+                c.label.toLowerCase().includes('user') ||
+                c.label.toLowerCase().includes('selfie')
+            )
+        );
+    }
+    
+    // If we couldn't find the opposite camera by label, just switch to a different one
+    if (!nextCamera) {
+        nextCamera = appState.availableCameras.find(c => c.deviceId !== currentCameraId);
+    }
+    
+    if (nextCamera) {
+        console.log(`Switching camera from ${currentCamera?.label || 'unknown'} to ${nextCamera.label}`);
+        await switchCamera(nextCamera.deviceId);
+    } else {
+        console.warn('Could not find another camera to switch to');
     }
 }
 
