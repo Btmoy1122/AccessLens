@@ -23,7 +23,8 @@ import {
     isPinchToClickEnabled,
     setClickRegistry,
     loadButtonPositions,
-    setHandMenuMode
+    setHandMenuMode,
+    unlockHandMenu
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -1594,6 +1595,10 @@ export const elementClickRegistry = {
     'help-btn': () => {
         console.log('Pinch click: Opening help');
         alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click');
+    },
+    'hand-menu-unlock-button': () => {
+        console.log('Pinch click: Unlocking hand menu');
+        unlockHandMenu();
     }
 };
 

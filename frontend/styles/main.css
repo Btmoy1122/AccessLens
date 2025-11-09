@@ -935,6 +935,13 @@ button:focus-visible {
     transition: all 0.2s ease;
 }
 
+.quadrilateral-path.locked {
+    fill: rgba(81, 207, 102, 0.2);
+    stroke: rgba(81, 207, 102, 0.8);
+    stroke-width: 0.015;
+    stroke-dasharray: 0.03, 0.01;
+}
+
 .hand-menu-buttons {
     position: absolute;
     top: 0;
@@ -1005,6 +1012,74 @@ button:focus-visible {
     background: rgba(74, 144, 226, 0.85);
     border-color: rgba(74, 144, 226, 0.5);
     color: #fff;
+}
+
+/* Hand Menu Lock Indicator */
+.hand-menu-lock-indicator {
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+.hand-menu-lock-indicator.locked {
+    background: rgba(81, 207, 102, 0.9);
+    border-color: rgba(81, 207, 102, 1);
+    color: #fff;
+    box-shadow: 0 0 15px rgba(81, 207, 102, 0.5);
+}
+
+.hand-menu-lock-indicator.unlocked {
+    background: rgba(74, 144, 226, 0.9);
+    border-color: rgba(74, 144, 226, 1);
+    color: #fff;
+}
+
+/* Hand Menu Unlock Button */
+.hand-menu-unlock-button {
+    background: rgba(255, 193, 7, 0.95);
+    backdrop-filter: blur(10px);
+    border: 3px solid rgba(255, 193, 7, 1);
+    border-radius: 12px;
+    color: #222;
+    padding: 16px 24px;
+    font-size: 18px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    min-height: 60px;
+    text-align: center;
+    margin-bottom: 12px;
+    width: 100%;
+}
+
+.hand-menu-unlock-button:hover {
+    background: rgba(255, 193, 7, 1);
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.hand-menu-unlock-button:active {
+    transform: scale(0.95);
+}
+
+.hand-menu-unlock-button.highlighted {
+    background: rgba(255, 152, 0, 1);
+    border-color: rgba(255, 152, 0, 1);
+    box-shadow: 0 0 20px rgba(255, 152, 0, 0.8);
 }
 
 .hand-menu-prompt {

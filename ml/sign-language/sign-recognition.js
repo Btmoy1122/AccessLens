@@ -28,6 +28,14 @@ let handMenuButtonElements = []; // Array of button elements in hand menu
 let lastQuadrilateralUpdate = 0; // Timestamp of last quadrilateral update
 const QUADRILATERAL_UPDATE_THROTTLE = 100; // Throttle updates to every 100ms
 
+// Hand menu locking state
+let handMenuLocked = false; // Whether the hand menu is currently locked
+let handMenuLockStartTime = null; // Timestamp when valid quadrilateral detection started
+let handMenuLockThreshold = 2000; // Duration in milliseconds to hold pose before locking (2 seconds)
+let lockedQuadrilateral = null; // Store the locked quadrilateral position
+let handMenuUnlockButton = null; // Unlock button element
+let handMenuLockIndicator = null; // Lock status indicator element
+
 // Configuration constants
 const LANDMARK_BUFFER_SIZE = 30; // Frame buffer for temporal analysis
 const PROCESSING_THROTTLE = 3; // Process every Nth frame for performance
@@ -2276,6 +2284,10 @@ export function setHandMenuMode(enabled) {
     if (enabled) {
         initializeHandMenuOverlay();
     } else {
+        // Unlock menu when disabling mode
+        if (handMenuLocked) {
+            unlockHandMenu();
+        }
         hideHandMenuOverlay();
     }
     
@@ -2322,6 +2334,35 @@ function createHandMenuButtons() {
     // Clear existing buttons
     handMenuButtons.innerHTML = '';
     handMenuButtonElements = [];
+    
+    // Create lock status indicator
+    handMenuLockIndicator = document.createElement('div');
+    handMenuLockIndicator.className = 'hand-menu-lock-indicator';
+    handMenuLockIndicator.id = 'hand-menu-lock-indicator';
+    handMenuLockIndicator.innerHTML = '🔓 Unlocked';
+    updateHandMenuLockIndicator();
+    handMenuButtons.appendChild(handMenuLockIndicator);
+    
+    // Create unlock button (hidden by default, shown when locked)
+    handMenuUnlockButton = document.createElement('button');
+    handMenuUnlockButton.className = 'hand-menu-unlock-button';
+    handMenuUnlockButton.id = 'hand-menu-unlock-button';
+    handMenuUnlockButton.innerHTML = '🔓 Unlock Menu';
+    handMenuUnlockButton.style.display = 'none';
+    
+    // Add click handler for unlock button
+    handMenuUnlockButton.addEventListener('click', () => {
+        unlockHandMenu();
+    });
+    
+    // Register unlock button in click registry for pinch-to-click
+    if (elementClickRegistry) {
+        elementClickRegistry['hand-menu-unlock-button'] = () => {
+            unlockHandMenu();
+        };
+    }
+    
+    handMenuButtons.appendChild(handMenuUnlockButton);
     
     // Get all sidebar nav items
     const sidebarNavItems = document.querySelectorAll('.nav-item');
@@ -2390,8 +2431,17 @@ function createHandMenuButtons() {
  * @param {Object} results - MediaPipe hands results
  */
 function processHandMenuQuadrilateral(results) {
+    // If menu is locked, keep it visible but don't update position
+    if (handMenuLocked && lockedQuadrilateral) {
+        // Update overlay with locked position to ensure it stays visible
+        updateHandMenuOverlay(lockedQuadrilateral);
+        return;
+    }
+    
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length < 2) {
         // Need both hands for quadrilateral
+        // Reset lock timer if hands are not detected
+        handMenuLockStartTime = null;
         hideHandMenuOverlay();
         return;
     }
@@ -2474,8 +2524,109 @@ function processHandMenuQuadrilateral(results) {
     
     handMenuQuadrilateral = quadrilateral;
     
+    // Check for automatic locking
+    checkHandMenuLock(quadrilateral);
+    
     // Update overlay with quadrilateral
     updateHandMenuOverlay(quadrilateral);
+}
+
+/**
+ * Check if hand menu should be automatically locked
+ * @param {Object} quadrilateral - Current quadrilateral
+ */
+function checkHandMenuLock(quadrilateral) {
+    const now = Date.now();
+    
+    // If we have a valid quadrilateral, start or continue tracking lock timer
+    if (quadrilateral) {
+        if (handMenuLockStartTime === null) {
+            // Start tracking lock timer
+            handMenuLockStartTime = now;
+        } else {
+            // Check if threshold has been met
+            const elapsed = now - handMenuLockStartTime;
+            if (elapsed >= handMenuLockThreshold && !handMenuLocked) {
+                // Lock the menu
+                lockHandMenu(quadrilateral);
+            }
+        }
+    } else {
+        // Reset timer if quadrilateral is invalid
+        handMenuLockStartTime = null;
+    }
+}
+
+/**
+ * Lock the hand menu at current position
+ * @param {Object} quadrilateral - Quadrilateral to lock at
+ */
+function lockHandMenu(quadrilateral) {
+    handMenuLocked = true;
+    lockedQuadrilateral = quadrilateral;
+    handMenuLockStartTime = null; // Reset timer
+    
+    // Update visual indicators
+    updateHandMenuLockIndicator();
+    
+    // Show unlock button
+    showHandMenuUnlockButton();
+    
+    console.log('Hand menu locked at position:', quadrilateral);
+}
+
+/**
+ * Unlock the hand menu
+ */
+export function unlockHandMenu() {
+    handMenuLocked = false;
+    lockedQuadrilateral = null;
+    handMenuLockStartTime = null; // Reset timer
+    
+    // Update visual indicators
+    updateHandMenuLockIndicator();
+    
+    // Hide unlock button
+    hideHandMenuUnlockButton();
+    
+    console.log('Hand menu unlocked');
+}
+
+/**
+ * Update hand menu lock indicator
+ */
+function updateHandMenuLockIndicator() {
+    if (!handMenuLockIndicator) {
+        return;
+    }
+    
+    if (handMenuLocked) {
+        handMenuLockIndicator.classList.add('locked');
+        handMenuLockIndicator.classList.remove('unlocked');
+        handMenuLockIndicator.innerHTML = '🔒 Locked';
+    } else {
+        handMenuLockIndicator.classList.add('unlocked');
+        handMenuLockIndicator.classList.remove('locked');
+        handMenuLockIndicator.innerHTML = '🔓 Unlocked';
+    }
+}
+
+/**
+ * Show unlock button
+ */
+function showHandMenuUnlockButton() {
+    if (handMenuUnlockButton) {
+        handMenuUnlockButton.style.display = 'flex';
+    }
+}
+
+/**
+ * Hide unlock button
+ */
+function hideHandMenuUnlockButton() {
+    if (handMenuUnlockButton) {
+        handMenuUnlockButton.style.display = 'none';
+    }
 }
 
 /**
@@ -2486,6 +2637,9 @@ function updateHandMenuOverlay(quadrilateral) {
     if (!handMenuOverlay || !handMenuQuadrilateralSVG || !handMenuButtons) {
         return;
     }
+    
+    // If menu is locked, use locked quadrilateral instead of current one
+    const quadToUse = handMenuLocked && lockedQuadrilateral ? lockedQuadrilateral : quadrilateral;
     
     // Show overlay
     handMenuOverlay.style.display = 'block';
@@ -2499,18 +2653,25 @@ function updateHandMenuOverlay(quadrilateral) {
         // Create points string for SVG polygon
         // Order: leftThumb (bottom-left), rightThumb (bottom-right), rightIndex (top-right), leftIndex (top-left)
         const points = [
-            `${quadrilateral.leftThumb.x},${quadrilateral.leftThumb.y}`,      // Bottom-left
-            `${quadrilateral.rightThumb.x},${quadrilateral.rightThumb.y}`,    // Bottom-right
-            `${quadrilateral.rightIndex.x},${quadrilateral.rightIndex.y}`,    // Top-right
-            `${quadrilateral.leftIndex.x},${quadrilateral.leftIndex.y}`       // Top-left
+            `${quadToUse.leftThumb.x},${quadToUse.leftThumb.y}`,      // Bottom-left
+            `${quadToUse.rightThumb.x},${quadToUse.rightThumb.y}`,    // Bottom-right
+            `${quadToUse.rightIndex.x},${quadToUse.rightIndex.y}`,    // Top-right
+            `${quadToUse.leftIndex.x},${quadToUse.leftIndex.y}`       // Top-left
         ].join(' ');
         
         path.setAttribute('points', points);
+        
+        // Update visual style based on lock status
+        if (handMenuLocked) {
+            path.classList.add('locked');
+        } else {
+            path.classList.remove('locked');
+        }
     }
     
     // Calculate transform to map buttons to quadrilateral
     // Use CSS clip-path or transform to warp buttons into quadrilateral
-    mapButtonsToQuadrilateral(quadrilateral);
+    mapButtonsToQuadrilateral(quadToUse);
     
     // Update button highlighting based on pinch location
     updateHandMenuButtonHighlighting();
@@ -2571,49 +2732,80 @@ function mapButtonsToQuadrilateral(quadrilateral) {
  * Update hand menu button highlighting based on pinch location
  */
 function updateHandMenuButtonHighlighting() {
-    if (!handMenuModeEnabled || !pinchLocation || !handMenuButtonElements.length) {
+    if (!handMenuModeEnabled || !pinchLocation) {
         // Clear all highlights
         handMenuButtonElements.forEach(btn => {
             if (btn.element) {
                 btn.element.classList.remove('highlighted');
             }
         });
+        // Also clear unlock button highlight
+        if (handMenuUnlockButton) {
+            handMenuUnlockButton.classList.remove('highlighted');
+        }
         return;
     }
     
     // Map pinch location to screen coordinates
     const screenCoords = mapNormalizedToScreen(pinchLocation.x, pinchLocation.y);
     
-    // Check which button the pinch is over
-    handMenuButtonElements.forEach(btn => {
-        if (!btn.element) {
-            return;
-        }
-        
-        const rect = btn.element.getBoundingClientRect();
-        const isOverButton = (
-            screenCoords.x >= rect.left &&
-            screenCoords.x <= rect.right &&
-            screenCoords.y >= rect.top &&
-            screenCoords.y <= rect.bottom
+    // Check if pinch is over unlock button first
+    if (handMenuUnlockButton && handMenuLocked) {
+        const unlockRect = handMenuUnlockButton.getBoundingClientRect();
+        const isOverUnlock = (
+            screenCoords.x >= unlockRect.left &&
+            screenCoords.x <= unlockRect.right &&
+            screenCoords.y >= unlockRect.top &&
+            screenCoords.y <= unlockRect.bottom
         );
         
-        if (isOverButton && currentPinchState) {
-            btn.element.classList.add('highlighted');
+        if (isOverUnlock && currentPinchState) {
+            handMenuUnlockButton.classList.add('highlighted');
         } else {
-            btn.element.classList.remove('highlighted');
+            handMenuUnlockButton.classList.remove('highlighted');
         }
-    });
+    }
+    
+    // Check which button the pinch is over
+    if (handMenuButtonElements.length > 0) {
+        handMenuButtonElements.forEach(btn => {
+            if (!btn.element) {
+                return;
+            }
+            
+            const rect = btn.element.getBoundingClientRect();
+            const isOverButton = (
+                screenCoords.x >= rect.left &&
+                screenCoords.x <= rect.right &&
+                screenCoords.y >= rect.top &&
+                screenCoords.y <= rect.bottom
+            );
+            
+            if (isOverButton && currentPinchState) {
+                btn.element.classList.add('highlighted');
+            } else {
+                btn.element.classList.remove('highlighted');
+            }
+        });
+    }
 }
 
 /**
  * Hide hand menu overlay
  */
 function hideHandMenuOverlay() {
+    // Don't hide if menu is locked (keep it visible)
+    if (handMenuLocked) {
+        return;
+    }
+    
     if (handMenuOverlay) {
         handMenuOverlay.style.display = 'none';
     }
     handMenuQuadrilateral = null;
+    
+    // Reset lock timer
+    handMenuLockStartTime = null;
     
     // Show prompt when hands are not detected
     showHandMenuPrompt();
@@ -2660,8 +2852,13 @@ export function cleanup() {
     }
     
     // Cleanup hand menu
+    if (handMenuLocked) {
+        unlockHandMenu();
+    }
     hideHandMenuOverlay();
     handMenuModeEnabled = false;
+    handMenuLockStartTime = null;
+    lockedQuadrilateral = null;
     
     isInitialized = false;
     console.log('Sign language recognition cleaned up');
