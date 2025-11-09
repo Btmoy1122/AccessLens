@@ -17,7 +17,7 @@
 
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
 import * as tf from '@tensorflow/tfjs';
-import { getAllActiveFaces } from './face-recognition.js';
+import { getAllActiveFaces, getAllRecognizedFaces } from './face-recognition.js';
 
 // Force CPU backend on Mac to avoid WebGL context issues
 // This is a workaround for "Failed to create WebGL canvas context" errors
@@ -401,19 +401,35 @@ function boxesOverlap(box1, box2, threshold = 100) {
  */
 function findMatchingFace(personDetection, recognizedFaces) {
     if (!recognizedFaces || recognizedFaces.length === 0) {
+        console.log('Scene description: No recognized faces available for matching');
         return null;
     }
     
     // Get person bounding box (COCO-SSD uses bbox format [x, y, width, height])
     const personBox = personDetection.bbox;
-    if (!personBox) {
+    if (!personBox || !Array.isArray(personBox) || personBox.length < 4) {
+        console.log('Scene description: Invalid person box:', personBox);
         return null;
     }
     
+    // COCO-SSD bbox format: [x, y, width, height] in pixels relative to video native resolution
+    const [personX, personY, personWidth, personHeight] = personBox;
+    const personCenterX = personX + personWidth / 2;
+    const personCenterY = personY + personHeight / 2;
+    
+    console.log(`Scene description: Looking for face match for person at (${personCenterX.toFixed(1)}, ${personCenterY.toFixed(1)}) size ${personWidth.toFixed(1)}x${personHeight.toFixed(1)}`);
+    console.log(`Scene description: Checking ${recognizedFaces.length} recognized faces:`, 
+        recognizedFaces.map(f => f.faceData.name));
+    
     // Check each recognized face for overlap
+    // Faces are already filtered to be recognized with names, but double-check
+    let bestMatch = null;
+    let closestDistance = Infinity;
+    
     for (const face of recognizedFaces) {
-        // Only match recognized faces (not unknown)
-        if (!face.isRecognized || !face.faceData || !face.faceData.name) {
+        // Skip if missing required data
+        if (!face.faceData || !face.faceData.name || face.faceData.name === 'Unknown') {
+            console.log(`Scene description: Skipping face - missing data or unknown:`, face.faceData?.name);
             continue;
         }
         
@@ -421,14 +437,128 @@ function findMatchingFace(personDetection, recognizedFaces) {
         if (face.detection && face.detection.detection && face.detection.detection.box) {
             const faceBox = face.detection.detection.box;
             
-            // Check if boxes overlap
-            if (boxesOverlap(personBox, faceBox, 150)) {
-                return face.faceData;
+            // face-api.js box format: {x, y, width, height} in pixels relative to video native resolution
+            const faceCenterX = faceBox.x + faceBox.width / 2;
+            const faceCenterY = faceBox.y + faceBox.height / 2;
+            
+            // Calculate distance between centers
+            const distance = Math.sqrt(
+                Math.pow(personCenterX - faceCenterX, 2) + 
+                Math.pow(personCenterY - faceCenterY, 2)
+            );
+            
+            // Calculate overlap area to help with matching
+            // Check if face center is within person box (more lenient matching)
+            const faceInPersonBox = (
+                faceCenterX >= personX && 
+                faceCenterX <= personX + personWidth &&
+                faceCenterY >= personY && 
+                faceCenterY <= personY + personHeight
+            );
+            
+            // Also check if person center is near face (within reasonable distance)
+            // Person boxes are larger, so face should be inside person box
+            // Use a very lenient threshold based on person box size - if face is within person box or close to it
+            // Increased to 80% to handle cases where coordinates might be slightly off
+            const maxDistance = Math.max(personWidth, personHeight) * 0.8; // 80% of person box dimension (very lenient)
+            
+            // Also check if person center is in the upper portion of person box (where face typically is)
+            // Faces are usually in the top 40% of a person's body
+            const personTopPortion = personY + personHeight * 0.4;
+            const faceInPersonHeadArea = faceCenterY >= personY && faceCenterY <= personTopPortion;
+            
+            console.log(`Scene description: Checking ${face.faceData.name} - face at (${faceCenterX.toFixed(1)}, ${faceCenterY.toFixed(1)}) size ${faceBox.width.toFixed(1)}x${faceBox.height.toFixed(1)}, distance: ${distance.toFixed(1)}px, inPersonBox: ${faceInPersonBox}, maxDistance: ${maxDistance.toFixed(1)}px`);
+            
+            // Match if face center is within person box OR within reasonable distance
+            // Also check if face box overlaps with person box at all (even partially)
+            const faceBoxOverlaps = (
+                faceBox.x < personX + personWidth &&
+                faceBox.x + faceBox.width > personX &&
+                faceBox.y < personY + personHeight &&
+                faceBox.y + faceBox.height > personY
+            );
+            
+            // Very lenient matching: match if face is in person box, close to person, boxes overlap, OR face is in head area
+            // This handles cases where coordinates might be slightly off or timing is mismatched
+            if (faceInPersonBox || faceBoxOverlaps || distance < maxDistance || faceInPersonHeadArea) {
+                // Calculate a match score - prefer matches that are closer and more certain
+                // Lower score is better (distance-based)
+                let matchScore = distance;
+                
+                // Boost score if face is in person box (very likely match)
+                if (faceInPersonBox) {
+                    matchScore *= 0.5;
+                }
+                
+                // Boost score if face is in head area (faces are typically in upper body)
+                if (faceInPersonHeadArea) {
+                    matchScore *= 0.7;
+                }
+                
+                // Boost score if boxes overlap (definite overlap)
+                if (faceBoxOverlaps) {
+                    matchScore *= 0.6;
+                }
+                
+                // Track best match based on score (lower is better)
+                if (matchScore < closestDistance) {
+                    closestDistance = matchScore;
+                    bestMatch = face.faceData;
+                    console.log(`Scene description: New best match: ${bestMatch.name} (score: ${matchScore.toFixed(1)}, distance: ${distance.toFixed(1)}px, inBox: ${faceInPersonBox}, overlaps: ${faceBoxOverlaps}, inHeadArea: ${faceInPersonHeadArea})`);
+                }
+            }
+        } else {
+            console.log(`Scene description: Skipping ${face.faceData.name} - no detection box`);
+        }
+    }
+    
+    // Fallback matching strategies if no match found:
+    // 1. If exactly one person and one recognized face, assume they match
+    // 2. If multiple people and faces, match largest person to largest face (simple heuristic)
+    if (!bestMatch) {
+        if (recognizedFaces.length === 1) {
+            // Single face - assume it matches the person
+            const singleFace = recognizedFaces[0];
+            if (singleFace.faceData && singleFace.faceData.name && singleFace.faceData.name !== 'Unknown') {
+                console.log(`Scene description: Fallback match - single person and single recognized face (${singleFace.faceData.name})`);
+                bestMatch = singleFace.faceData;
+            }
+        } else if (recognizedFaces.length > 0) {
+            // Multiple faces - try to match based on size/position
+            // Find the largest face (most prominent) as a fallback
+            let largestFace = null;
+            let largestSize = 0;
+            
+            for (const face of recognizedFaces) {
+                if (face.detection && face.detection.detection && face.detection.detection.box) {
+                    const faceBox = face.detection.detection.box;
+                    const size = faceBox.width * faceBox.height;
+                    if (size > largestSize) {
+                        largestSize = size;
+                        largestFace = face;
+                    }
+                }
+            }
+            
+            // If person box is also large, match to largest face (simple heuristic)
+            const personSize = personWidth * personHeight;
+            if (largestFace && personSize > 50000) { // Only for reasonably sized person detections
+                console.log(`Scene description: Fallback match - matching large person to largest face (${largestFace.faceData.name})`);
+                bestMatch = largestFace.faceData;
             }
         }
     }
     
-    return null;
+    if (bestMatch) {
+        console.log(`Scene description: ✅ MATCHED person to ${bestMatch.name} (distance: ${closestDistance !== Infinity ? closestDistance.toFixed(1) : 'N/A'}px)`);
+    } else {
+        console.log(`Scene description: ❌ No match found for person at (${personCenterX.toFixed(1)}, ${personCenterY.toFixed(1)})`);
+        if (recognizedFaces.length > 0) {
+            console.log(`Scene description: Available recognized faces: ${recognizedFaces.map(f => f.faceData.name).join(', ')}`);
+        }
+    }
+    
+    return bestMatch;
 }
 
 /**
@@ -448,9 +578,40 @@ function generateDescription(predictions) {
     }
     
     // Get currently recognized faces for matching
+    // Use getAllActiveFaces to get faces with full detection data, then filter for recognized ones
     let recognizedFaces = [];
     try {
-        recognizedFaces = getAllActiveFaces();
+        const allFaces = getAllActiveFaces();
+        // Filter to only recognized faces (not unknown) and ensure they have names
+        recognizedFaces = allFaces.filter(face => 
+            face.isRecognized && 
+            face.faceData && 
+            face.faceData.name && 
+            face.faceData.name !== 'Unknown' &&
+            face.detection &&
+            face.detection.detection &&
+            face.detection.detection.box
+        );
+        
+        // Debug logging
+        if (recognizedFaces.length > 0) {
+            console.log(`Scene description: Found ${recognizedFaces.length} recognized faces:`, 
+                recognizedFaces.map(f => ({ 
+                    name: f.faceData.name, 
+                    isSelf: f.faceData.isSelf,
+                    hasDetection: !!f.detection,
+                    hasBox: !!(f.detection?.detection?.box)
+                })));
+        } else {
+            console.log('Scene description: No recognized faces found (allFaces count:', allFaces.length, ')');
+            if (allFaces.length > 0) {
+                console.log('Scene description: All faces:', allFaces.map(f => ({
+                    name: f.faceData?.name || 'Unknown',
+                    isRecognized: f.isRecognized,
+                    hasDetection: !!f.detection
+                })));
+            }
+        }
     } catch (error) {
         console.warn('Could not get recognized faces for scene description:', error);
     }
@@ -465,21 +626,98 @@ function generateDescription(predictions) {
         return null;
     }
     
+    // Count persons and recognized faces for fallback matching
+    const personDetections = validPredictions.filter(p => p.class === 'person' && p.bbox);
+    const recognizedFaceCount = recognizedFaces.length;
+    
     // Process each prediction and replace "person" with names if recognized
     const processedObjects = validPredictions.map(prediction => {
         // If it's a person, try to match with recognized faces
         if (prediction.class === 'person' && prediction.bbox) {
             const matchingFace = findMatchingFace(prediction, recognizedFaces);
-            if (matchingFace && matchingFace.name) {
+            if (matchingFace && matchingFace.name && matchingFace.name !== 'Unknown') {
                 // Check if this is the user's own face (isSelf flag)
                 if (matchingFace.isSelf === true) {
                     // Use "you" instead of name for the user
+                    console.log(`Scene description: ✅ Matched person to user (you)`);
                     return 'you';
                 }
                 // Use person's name instead of "person"
+                console.log(`Scene description: ✅ Matched person to ${matchingFace.name}`);
                 return matchingFace.name;
             }
-            // If no match found, use "unknown person" instead of "person"
+            
+            // Enhanced fallback strategies when coordinate matching fails
+            if (!matchingFace && recognizedFaces.length > 0) {
+                // Strategy 1: Single person and single face - assume they match
+                if (personDetections.length === 1 && recognizedFaceCount === 1) {
+                    const singleFace = recognizedFaces[0];
+                    if (singleFace.faceData && singleFace.faceData.name && singleFace.faceData.name !== 'Unknown') {
+                        if (singleFace.faceData.isSelf === true) {
+                            console.log(`Scene description: Fallback Strategy 1 - single person to user (you)`);
+                            return 'you';
+                        } else {
+                            console.log(`Scene description: Fallback Strategy 1 - single person to ${singleFace.faceData.name}`);
+                            return singleFace.faceData.name;
+                        }
+                    }
+                }
+                
+                // Strategy 2: Multiple people/faces - use size/position heuristics
+                // Find the largest recognized face as a fallback (most prominent person)
+                let largestFace = null;
+                let largestFaceSize = 0;
+                for (const face of recognizedFaces) {
+                    if (face.detection && face.detection.detection && face.detection.detection.box) {
+                        const box = face.detection.detection.box;
+                        const size = box.width * box.height;
+                        if (size > largestFaceSize) {
+                            largestFaceSize = size;
+                            largestFace = face;
+                        }
+                    }
+                }
+                
+                // Strategy 2a: If this is the first (largest) person detection, match to largest face
+                const personSize = personWidth * personHeight;
+                const isLargestPerson = personDetections.every(p => {
+                    if (p === prediction) return true;
+                    const otherSize = p.bbox[2] * p.bbox[3];
+                    return personSize >= otherSize;
+                });
+                
+                if (largestFace && isLargestPerson && largestFace.faceData && largestFace.faceData.name && largestFace.faceData.name !== 'Unknown') {
+                    if (largestFace.faceData.isSelf === true) {
+                        console.log(`Scene description: Fallback Strategy 2 - largest person to largest face (you)`);
+                        return 'you';
+                    } else {
+                        console.log(`Scene description: Fallback Strategy 2 - largest person to largest face (${largestFace.faceData.name})`);
+                        return largestFace.faceData.name;
+                    }
+                }
+                
+                // Strategy 3: Last resort - if there are recognized faces, use the first one
+                // This is better than "unknown person" when faces ARE recognized
+                if (recognizedFaces.length > 0) {
+                    const firstFace = recognizedFaces[0];
+                    if (firstFace.faceData && firstFace.faceData.name && firstFace.faceData.name !== 'Unknown') {
+                        if (firstFace.faceData.isSelf === true) {
+                            console.log(`Scene description: Fallback Strategy 3 - using first recognized face (you) - coordinate matching failed`);
+                            return 'you';
+                        } else {
+                            console.log(`Scene description: Fallback Strategy 3 - using first recognized face (${firstFace.faceData.name}) - coordinate matching failed`);
+                            return firstFace.faceData.name;
+                        }
+                    }
+                }
+            }
+            
+            // If no match found and no recognized faces, use "unknown person"
+            if (recognizedFaces.length === 0) {
+                console.log(`Scene description: ⚠️ Person detected but no recognized faces available`);
+            } else {
+                console.log(`Scene description: ⚠️ Person detected but all fallback strategies failed. Persons: ${personDetections.length}, Recognized faces: ${recognizedFaceCount} (${recognizedFaces.map(f => f.faceData.name).join(', ')})`);
+            }
             return 'unknown person';
         }
         // For non-person objects, use the class name
