@@ -10,8 +10,14 @@ import {
     startListening, 
     stopListening, 
     setCaptionCallback,
-    setAppState 
+    setAppState,
+    setVoiceCommandProcessor
 } from '@ml/speech/speech-to-text.js';
+import {
+    initVoiceCommands,
+    setCommandCallbacks,
+    processVoiceCommand
+} from '@ml/speech/voice-commands.js';
 import { 
     initSignRecognition,
     startDetection,
@@ -25,7 +31,8 @@ import {
     loadButtonPositions,
     setHandMenuMode,
     unlockHandMenu,
-    updateAllHandMenuButtonStates
+    updateAllHandMenuButtonStates,
+    setHandMenuToDefaultPosition
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -89,6 +96,34 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
         console.log('AccessLens initialized');
         
+        // Suppress WebGL errors on Mac - they're expected and handled gracefully
+        if (navigator.platform.toUpperCase().indexOf('MAC') >= 0) {
+            // Override global error handler to suppress WebGL errors
+            const originalErrorHandler = window.onerror;
+            window.onerror = function(msg, url, line, col, error) {
+                const errorMsg = msg || (error && error.message) || '';
+                // Suppress WebGL canvas context errors on Mac
+                if (errorMsg.includes('WebGL') || errorMsg.includes('canvas context')) {
+                    console.warn('Suppressed WebGL error (Mac compatibility):', errorMsg);
+                    return true; // Prevent default error handling
+                }
+                // Call original error handler for other errors
+                if (originalErrorHandler) {
+                    return originalErrorHandler.call(this, msg, url, line, col, error);
+                }
+                return false;
+            };
+            
+            // Also catch unhandled promise rejections
+            window.addEventListener('unhandledrejection', function(event) {
+                const errorMsg = event.reason && (event.reason.message || event.reason.toString()) || '';
+                if (errorMsg.includes('WebGL') || errorMsg.includes('canvas context')) {
+                    console.warn('Suppressed WebGL promise rejection (Mac compatibility):', errorMsg);
+                    event.preventDefault(); // Prevent default error handling
+                }
+            });
+        }
+        
         // Ensure body has black background
         document.body.style.backgroundColor = '#000';
         document.documentElement.style.backgroundColor = '#000';
@@ -119,6 +154,24 @@ document.addEventListener('DOMContentLoaded', () => {
     
         // Initialize ML modules (speech-to-text, scene description, etc.)
         initializeMLModules();
+        
+        // Start speech recognition for voice commands (always runs in background)
+        // This allows voice commands to work even when captions are off
+        setTimeout(() => {
+            if (appState.cameraReady) {
+                startListening(); // Start recognition for voice commands
+                console.log('Voice command recognition started');
+            } else {
+                // Wait for camera to be ready
+                const checkCamera = setInterval(() => {
+                    if (appState.cameraReady) {
+                        clearInterval(checkCamera);
+                        startListening();
+                        console.log('Voice command recognition started');
+                    }
+                }, 500);
+            }
+        }, 1000);
         
         // Initialize MediaPipe on app startup (non-blocking)
         initializeMediaPipeOnStartup();
@@ -211,6 +264,160 @@ function initializeDOMElements() {
 }
 
 /**
+ * Initialize draggable captions
+ */
+function initializeDraggableCaptions() {
+    if (!captionsContainer) return;
+    
+    let isDragging = false;
+    let currentX = 0;
+    let currentY = 0;
+    let initialX = 0;
+    let initialY = 0;
+    let xOffset = 0;
+    let yOffset = 0;
+    
+    // Load saved position from localStorage
+    const savedPosition = localStorage.getItem('captionsPosition');
+    if (savedPosition) {
+        try {
+            const { x, y } = JSON.parse(savedPosition);
+            xOffset = x;
+            yOffset = y;
+            // Wait for container to be rendered before setting position
+            setTimeout(() => {
+                setCaptionsPosition(xOffset, yOffset);
+            }, 100);
+        } catch (e) {
+            console.warn('Failed to load saved captions position:', e);
+        }
+    } else {
+        // Calculate initial position from current CSS position
+        setTimeout(() => {
+            const rect = captionsContainer.getBoundingClientRect();
+            xOffset = rect.left;
+            yOffset = rect.top;
+        }, 100);
+    }
+    
+    // Set initial position
+    function setCaptionsPosition(x, y) {
+        const container = captionsContainer;
+        const rect = container.getBoundingClientRect();
+        const containerWidth = rect.width;
+        const containerHeight = rect.height;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+        
+        // Allow positioning all the way to edges
+        // Constrain so at least part of the container is visible
+        const minX = -(containerWidth - 50); // Allow 50px to stick out on left
+        const maxX = viewportWidth - 50; // Allow 50px to stick out on right
+        const minY = 0;
+        const maxY = viewportHeight - containerHeight;
+        
+        x = Math.max(minX, Math.min(x, maxX));
+        y = Math.max(minY, Math.min(y, maxY));
+        
+        container.style.left = x + 'px';
+        container.style.top = y + 'px';
+        container.style.bottom = 'auto';
+        container.style.right = 'auto';
+        container.style.transform = 'none';
+        
+        xOffset = x;
+        yOffset = y;
+    }
+    
+    // Save position to localStorage
+    function saveCaptionsPosition() {
+        localStorage.setItem('captionsPosition', JSON.stringify({
+            x: xOffset,
+            y: yOffset
+        }));
+    }
+    
+    // Mouse events
+    captionsContainer.addEventListener('mousedown', dragStart);
+    document.addEventListener('mousemove', drag);
+    document.addEventListener('mouseup', dragEnd);
+    
+    // Touch events for mobile
+    captionsContainer.addEventListener('touchstart', dragStart, { passive: false });
+    document.addEventListener('touchmove', drag, { passive: false });
+    document.addEventListener('touchend', dragEnd);
+    
+    function dragStart(e) {
+        // Don't start dragging if clicking on text (allow text selection)
+        if (e.target === captionsText && captionsText.textContent.trim()) {
+            // Check if user is trying to select text
+            const selection = window.getSelection();
+            if (selection.toString().length > 0) {
+                return;
+            }
+        }
+        
+        // Get current position from container
+        const rect = captionsContainer.getBoundingClientRect();
+        xOffset = rect.left;
+        yOffset = rect.top;
+        
+        if (e.type === 'touchstart') {
+            initialX = e.touches[0].clientX - xOffset;
+            initialY = e.touches[0].clientY - yOffset;
+        } else {
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+        }
+        
+        if (captionsContainer.contains(e.target) || e.target === captionsContainer) {
+            isDragging = true;
+            captionsContainer.classList.add('dragging');
+            e.preventDefault();
+        }
+    }
+    
+    function drag(e) {
+        if (!isDragging) return;
+        
+        e.preventDefault();
+        
+        if (e.type === 'touchmove') {
+            currentX = e.touches[0].clientX - initialX;
+            currentY = e.touches[0].clientY - initialY;
+        } else {
+            currentX = e.clientX - initialX;
+            currentY = e.clientY - initialY;
+        }
+        
+        setCaptionsPosition(currentX, currentY);
+    }
+    
+    function dragEnd(e) {
+        if (isDragging) {
+            isDragging = false;
+            captionsContainer.classList.remove('dragging');
+            saveCaptionsPosition();
+        }
+    }
+    
+    // Double-click to reset position
+    captionsContainer.addEventListener('dblclick', () => {
+        // Reset to default position (bottom center)
+        const container = captionsContainer;
+        container.style.left = '50%';
+        container.style.top = 'auto';
+        container.style.bottom = '80px';
+        container.style.right = 'auto';
+        container.style.transform = 'translateX(-50%)';
+        
+        xOffset = 0;
+        yOffset = 0;
+        saveCaptionsPosition();
+    });
+}
+
+/**
  * Initialize sidebar functionality
  */
 function initializeSidebar() {
@@ -242,6 +449,14 @@ function initializeSidebar() {
  */
 function toggleSidebar() {
     appState.sidebarOpen = !appState.sidebarOpen;
+    updateSidebarState();
+}
+
+/**
+ * Open sidebar
+ */
+function openSidebar() {
+    appState.sidebarOpen = true;
     updateSidebarState();
 }
 
@@ -587,10 +802,18 @@ function toggleFeature(featureName) {
     
     // Handle feature-specific logic
     if (featureName === 'speech') {
+        // Voice commands always work - only captions are toggled
         if (appState.features.speech.enabled) {
             startSpeechRecognition();
         } else {
+            // Only stop captions, not recognition (voice commands need it)
             stopSpeechRecognition();
+        }
+        // Ensure voice commands are always running
+        // Recognition continues in background for voice commands even when captions are off
+        if (appState.cameraReady) {
+            // Ensure recognition is running for voice commands
+            startListening();
         }
     } else if (featureName === 'sign') {
         // Hand Detection is always enabled - prevent disabling
@@ -709,12 +932,101 @@ function initializeSpeechToText() {
         return;
     }
     
-    // Set up caption callback
+    // Initialize voice commands
+    console.log('Initializing voice commands...');
+    initVoiceCommands();
+    console.log('Voice commands initialized');
+    
+    // Set up voice command callbacks
+    console.log('Setting up voice command callbacks...');
+    setCommandCallbacks({
+        openMenu: () => {
+            console.log('Voice command: Open menu');
+            // Only open hand menu at default position
+            openHandMenuAtDefaultPosition();
+        },
+        openSidebar: () => {
+            console.log('Voice command: Open sidebar');
+            openSidebar();
+        },
+        closeMenu: () => {
+            console.log('Voice command: Close menu');
+            // Only close hand menu
+            closeHandMenu();
+        },
+        closeSidebar: () => {
+            console.log('Voice command: Close sidebar');
+            // Only close sidebar
+            closeSidebar();
+        },
+        toggleMenu: () => {
+            console.log('Voice command: Toggle menu');
+            toggleSidebar();
+        },
+        toggleSpeech: () => {
+            console.log('Voice command: Toggle speech');
+            toggleFeature('speech');
+        },
+        toggleSign: () => {
+            console.log('Voice command: Toggle sign language');
+            toggleFeature('sign');
+        },
+        toggleScene: () => {
+            console.log('Voice command: Toggle scene description');
+            toggleFeature('scene');
+        },
+        toggleFace: () => {
+            console.log('Voice command: Toggle face recognition');
+            toggleFeature('face');
+        },
+        toggleMirrorCamera: () => {
+            console.log('Voice command: Toggle mirror camera');
+            toggleCameraFlip();
+        },
+        toggleHandMenu: () => {
+            console.log('Voice command: Toggle hand menu');
+            toggleHandMenuMode();
+        },
+        closeHandMenu: () => {
+            console.log('Voice command: Close hand menu');
+            closeHandMenu();
+        },
+        fixHandMenu: () => {
+            console.log('Voice command: Fix/Reset hand menu');
+            fixHandMenu();
+        },
+        showHelp: () => {
+            console.log('Voice command: Show help');
+            // Show help dialog or list available commands
+            const commands = [
+                'Open menu', 'Close menu', 'Toggle menu',
+                'Enable speech', 'Enable sign language',
+                'Enable scene description', 'Enable face recognition',
+                'Enable hand menu', 'Fix menu', 'Reset menu', // Updated help
+                'Mirror camera', 'Flip camera' // Updated help
+            ];
+            alert(`Available Voice Commands:\n\n${commands.join('\n')}`);
+        }
+    });
+    
+    // Set up voice command processor to receive speech results
+    // This allows commands to work even when captions are off
+    console.log('Setting up voice command processor...');
+    setVoiceCommandProcessor((text, isFinal) => {
+        console.log('Voice command processor called:', text, 'isFinal:', isFinal);
+        if (isFinal && text && text.trim()) {
+            console.log('Processing voice command:', text);
+            processVoiceCommand(text);
+        }
+    });
+    console.log('Voice command processor set up');
+    
+    // Set up caption callback (only for displaying captions)
     setCaptionCallback((text, isInterim) => {
         updateCaptions(text, isInterim);
     });
     
-    console.log('Speech-to-text module initialized');
+    console.log('Speech-to-text module initialized with voice commands');
 }
 
 /**
@@ -1020,6 +1332,7 @@ function handleFaceRegistration() {
 
 /**
  * Start speech recognition
+ * Note: Recognition always runs for voice commands, but captions only show when enabled
  */
 function startSpeechRecognition() {
     if (!appState.cameraReady) {
@@ -1037,10 +1350,16 @@ function startSpeechRecognition() {
     const started = startListening();
     if (started) {
         console.log('Speech recognition started');
-        updateCaptions('Listening...', false);
+        // Only show "Listening..." caption if speech feature is enabled
+        if (appState.features.speech.enabled) {
+            updateCaptions('Listening...', false);
+        }
     } else {
         console.error('Failed to start speech recognition');
-        updateCaptions('Failed to start speech recognition', true);
+        // Only show error caption if speech feature is enabled
+        if (appState.features.speech.enabled) {
+            updateCaptions('Failed to start speech recognition', true);
+        }
         // Disable the feature if it fails
         appState.features.speech.enabled = false;
         updateFeatureUI('speech');
@@ -1049,11 +1368,15 @@ function startSpeechRecognition() {
 
 /**
  * Stop speech recognition
+ * Note: We don't actually stop recognition when captions are off,
+ * because voice commands need it to keep running
  */
 function stopSpeechRecognition() {
-    stopListening();
+    // Only stop if we really want to stop (e.g., user explicitly disabled)
+    // For now, we keep recognition running for voice commands
+    // But we clear the captions display
     updateCaptions('', false);
-    console.log('Speech recognition stopped');
+    console.log('Speech captions stopped (recognition continues for voice commands)');
 }
 
 /**
@@ -1609,6 +1932,91 @@ function toggleHandMenuMode() {
     }
     
     console.log('Hand menu mode toggled:', appState.handMenuMode ? 'enabled' : 'disabled');
+}
+
+/**
+ * Open hand menu at default position in center of screen
+ */
+function openHandMenuAtDefaultPosition() {
+    console.log('openHandMenuAtDefaultPosition called');
+    // Enable hand menu mode if not already enabled
+    if (!appState.handMenuMode) {
+        appState.handMenuMode = true;
+        
+        // Update UI
+        const handMenuToggle = document.getElementById('hand-menu-toggle');
+        if (handMenuToggle) {
+            handMenuToggle.classList.add('active');
+        }
+        
+        // Update state in sign recognition module
+        updateHandMenuMode();
+    }
+    
+    // Set hand menu to default position (centered)
+    if (typeof setHandMenuToDefaultPosition === 'function') {
+        console.log('Calling setHandMenuToDefaultPosition...');
+        setHandMenuToDefaultPosition();
+        console.log('Hand menu set to default position');
+    } else {
+        console.error('setHandMenuToDefaultPosition function not available!');
+    }
+}
+
+/**
+ * Close hand menu (unlock and hide)
+ */
+function closeHandMenu() {
+    // Unlock the hand menu if it's locked
+    if (typeof unlockHandMenu === 'function') {
+        unlockHandMenu();
+    }
+    
+    // Hide the hand menu overlay
+    hideHandMenuOverlay();
+    
+    // Optionally disable hand menu mode
+    // Uncomment the following lines if you want to disable the mode when closing
+    // appState.handMenuMode = false;
+    // updateHandMenuMode();
+    // const handMenuToggle = document.getElementById('hand-menu-toggle');
+    // if (handMenuToggle) {
+    //     handMenuToggle.classList.remove('active');
+    // }
+    
+    console.log('Hand menu closed');
+}
+
+/**
+ * Fix/Reset hand menu to default position
+ * Only resets if menu is already open, doesn't open it if closed
+ */
+function fixHandMenu() {
+    // Only fix menu if it's already open/enabled
+    if (!appState.handMenuMode) {
+        console.log('Hand menu is not open - fix menu only works when menu is already open');
+        return;
+    }
+    
+    // Check if menu overlay is visible
+    const handMenuOverlay = document.getElementById('hand-menu-overlay');
+    if (handMenuOverlay && handMenuOverlay.style.display === 'none') {
+        console.log('Hand menu overlay is not visible - fix menu only works when menu is visible');
+        return;
+    }
+    
+    // Unlock the hand menu first if it's locked
+    if (typeof unlockHandMenu === 'function') {
+        unlockHandMenu();
+    }
+    
+    // Reset hand menu to default position (centered)
+    if (typeof setHandMenuToDefaultPosition === 'function') {
+        setHandMenuToDefaultPosition();
+        console.log('Hand menu reset to default position');
+    } else {
+        console.warn('setHandMenuToDefaultPosition function not available');
+    }
 }
 
 /**
