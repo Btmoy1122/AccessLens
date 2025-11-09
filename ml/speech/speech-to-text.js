@@ -127,6 +127,16 @@ function handleSpeechStart() {
     }
 }
 
+// Import voice commands processor
+let processVoiceCommand = null;
+
+/**
+ * Set voice command processor callback
+ */
+export function setVoiceCommandProcessor(processor) {
+    processVoiceCommand = processor;
+}
+
 /**
  * Handle speech recognition results
  */
@@ -149,6 +159,11 @@ function handleSpeechResult(event) {
         currentTranscript = finalTranscript.trim();
         displayCaption(currentTranscript, false);
         
+        // Process voice commands from final transcript
+        if (processVoiceCommand) {
+            processVoiceCommand(currentTranscript, true);
+        }
+        
         // Clear caption after 5 seconds of silence
         clearTimeout(transcriptTimeout);
         transcriptTimeout = setTimeout(() => {
@@ -166,7 +181,9 @@ function handleSpeechResult(event) {
  * Display caption
  */
 function displayCaption(text, isInterim) {
-    if (captionCallback) {
+    // Only show captions if speech feature is enabled
+    // But always process for voice commands
+    if (captionCallback && appState?.features?.speech?.enabled) {
         captionCallback(text, isInterim);
     }
 }

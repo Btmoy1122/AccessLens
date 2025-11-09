@@ -8,25 +8,32 @@
  * - Menu control (open, close, toggle)
  * - Feature toggling via voice commands
  * - Extensible command system
+ * - Independent speech recognition (works even when captions are off)
  */
 
 // Command callbacks
 let commandCallbacks = {};
 
+// Shared speech recognition instance (will be set by speech-to-text module)
+let sharedRecognition = null;
+let commandCallback = null;
+
 // Command patterns - map phrases to command names
 const COMMAND_PATTERNS = {
     // Menu control commands
     'open menu': 'openMenu',
-    'open sidebar': 'openMenu',
     'show menu': 'openMenu',
-    'show sidebar': 'openMenu',
     'menu': 'openMenu',
-    'sidebar': 'openMenu',
+    
+    'open sidebar': 'openSidebar',
+    'show sidebar': 'openSidebar',
+    'sidebar': 'openSidebar',
     
     'close menu': 'closeMenu',
-    'close sidebar': 'closeMenu',
     'hide menu': 'closeMenu',
-    'hide sidebar': 'closeMenu',
+    
+    'close sidebar': 'closeSidebar',
+    'hide sidebar': 'closeSidebar',
     
     'toggle menu': 'toggleMenu',
     'toggle sidebar': 'toggleMenu',
@@ -60,6 +67,28 @@ const COMMAND_PATTERNS = {
     'face recognition': 'toggleFace',
     'face': 'toggleFace',
     
+    // Camera mirror/flip commands
+    'mirror camera': 'toggleMirrorCamera',
+    'flip camera': 'toggleMirrorCamera',
+    'toggle mirror camera': 'toggleMirrorCamera',
+    'toggle flip camera': 'toggleMirrorCamera',
+    'enable mirror camera': 'toggleMirrorCamera',
+    'disable mirror camera': 'toggleMirrorCamera',
+    'turn on mirror camera': 'toggleMirrorCamera',
+    'turn off mirror camera': 'toggleMirrorCamera',
+    'mirror': 'toggleMirrorCamera',
+    'flip': 'toggleMirrorCamera',
+    
+    // Hand menu commands
+    'enable hand menu': 'toggleHandMenu',
+    'disable hand menu': 'toggleHandMenu',
+    'turn on hand menu': 'toggleHandMenu',
+    'turn off hand menu': 'toggleHandMenu',
+    'hand menu': 'toggleHandMenu',
+    'hand': 'toggleHandMenu',
+    'close hand menu': 'closeHandMenu',
+    'hide hand menu': 'closeHandMenu',
+    
     // Help commands
     'help': 'showHelp',
     'what can I say': 'showHelp',
@@ -73,6 +102,29 @@ const COMMAND_PATTERNS = {
 export function initVoiceCommands() {
     console.log('Voice commands initialized');
     return true;
+}
+
+/**
+ * Set the shared speech recognition instance
+ * This allows voice commands to work with the same recognition instance as captions
+ * @param {SpeechRecognition} recognition - The speech recognition instance
+ */
+export function setSharedRecognition(recognition) {
+    sharedRecognition = recognition;
+    console.log('Shared recognition instance set for voice commands');
+}
+
+/**
+ * Process speech results for voice commands
+ * This should be called from the speech-to-text module when it receives results
+ * @param {string} text - Recognized speech text
+ * @param {boolean} isFinal - Whether this is a final result
+ */
+export function processSpeechForCommands(text, isFinal) {
+    // Only process final results for commands to avoid false triggers
+    if (isFinal && text && text.trim()) {
+        processVoiceCommand(text);
+    }
 }
 
 /**

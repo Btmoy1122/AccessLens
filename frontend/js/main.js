@@ -10,7 +10,8 @@ import {
     startListening, 
     stopListening, 
     setCaptionCallback,
-    setAppState 
+    setAppState,
+    setVoiceCommandProcessor
 } from '@ml/speech/speech-to-text.js';
 import {
     initVoiceCommands,
@@ -30,7 +31,8 @@ import {
     loadButtonPositions,
     setHandMenuMode,
     unlockHandMenu,
-    updateAllHandMenuButtonStates
+    updateAllHandMenuButtonStates,
+    setHandMenuToDefaultPosition
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -152,6 +154,24 @@ document.addEventListener('DOMContentLoaded', () => {
     
         // Initialize ML modules (speech-to-text, scene description, etc.)
         initializeMLModules();
+        
+        // Start speech recognition for voice commands (always runs in background)
+        // This allows voice commands to work even when captions are off
+        setTimeout(() => {
+            if (appState.cameraReady) {
+                startListening(); // Start recognition for voice commands
+                console.log('Voice command recognition started');
+            } else {
+                // Wait for camera to be ready
+                const checkCamera = setInterval(() => {
+                    if (appState.cameraReady) {
+                        clearInterval(checkCamera);
+                        startListening();
+                        console.log('Voice command recognition started');
+                    }
+                }, 500);
+            }
+        }, 1000);
         
         // Initialize MediaPipe on app startup (non-blocking)
         initializeMediaPipeOnStartup();
@@ -757,10 +777,21 @@ function initializeSpeechToText() {
     setCommandCallbacks({
         openMenu: () => {
             console.log('Voice command: Open menu');
+            // Only open hand menu at default position
+            openHandMenuAtDefaultPosition();
+        },
+        openSidebar: () => {
+            console.log('Voice command: Open sidebar');
             openSidebar();
         },
         closeMenu: () => {
             console.log('Voice command: Close menu');
+            // Only close hand menu
+            closeHandMenu();
+        },
+        closeSidebar: () => {
+            console.log('Voice command: Close sidebar');
+            // Only close sidebar
             closeSidebar();
         },
         toggleMenu: () => {
@@ -783,29 +814,42 @@ function initializeSpeechToText() {
             console.log('Voice command: Toggle face recognition');
             toggleFeature('face');
         },
+        toggleMirrorCamera: () => {
+            console.log('Voice command: Toggle mirror camera');
+            toggleCameraFlip();
+        },
+        toggleHandMenu: () => {
+            console.log('Voice command: Toggle hand menu');
+            toggleHandMenuMode();
+        },
+        closeHandMenu: () => {
+            console.log('Voice command: Close hand menu');
+            closeHandMenu();
+        },
         showHelp: () => {
             console.log('Voice command: Show help');
             // Show help dialog or list available commands
             const commands = [
                 'Open menu', 'Close menu', 'Toggle menu',
                 'Enable speech', 'Enable sign language', 
-                'Enable scene description', 'Enable face recognition'
+                'Enable scene description', 'Enable face recognition',
+                'Enable hand menu', 'Mirror camera', 'Flip camera'
             ];
             alert(`Available Voice Commands:\n\n${commands.join('\n')}`);
         }
     });
     
-    // Set up caption callback with voice command processing
+    // Set up voice command processor to receive speech results
+    // This allows commands to work even when captions are off
+    setVoiceCommandProcessor((text, isFinal) => {
+        if (isFinal && text && text.trim()) {
+            processVoiceCommand(text);
+        }
+    });
+    
+    // Set up caption callback (only for displaying captions)
     setCaptionCallback((text, isInterim) => {
         updateCaptions(text, isInterim);
-        
-        // Process voice commands from final (non-interim) text
-        if (!isInterim && text && text.trim()) {
-            const commandExecuted = processVoiceCommand(text);
-            if (commandExecuted) {
-                console.log('Voice command executed:', text);
-            }
-        }
     });
     
     console.log('Speech-to-text module initialized with voice commands');
@@ -1114,6 +1158,7 @@ function handleFaceRegistration() {
 
 /**
  * Start speech recognition
+ * Note: Recognition always runs for voice commands, but captions only show when enabled
  */
 function startSpeechRecognition() {
     if (!appState.cameraReady) {
@@ -1131,10 +1176,16 @@ function startSpeechRecognition() {
     const started = startListening();
     if (started) {
         console.log('Speech recognition started');
-        updateCaptions('Listening...', false);
+        // Only show "Listening..." caption if speech feature is enabled
+        if (appState.features.speech.enabled) {
+            updateCaptions('Listening...', false);
+        }
     } else {
         console.error('Failed to start speech recognition');
-        updateCaptions('Failed to start speech recognition', true);
+        // Only show error caption if speech feature is enabled
+        if (appState.features.speech.enabled) {
+            updateCaptions('Failed to start speech recognition', true);
+        }
         // Disable the feature if it fails
         appState.features.speech.enabled = false;
         updateFeatureUI('speech');
@@ -1143,11 +1194,15 @@ function startSpeechRecognition() {
 
 /**
  * Stop speech recognition
+ * Note: We don't actually stop recognition when captions are off,
+ * because voice commands need it to keep running
  */
 function stopSpeechRecognition() {
-    stopListening();
+    // Only stop if we really want to stop (e.g., user explicitly disabled)
+    // For now, we keep recognition running for voice commands
+    // But we clear the captions display
     updateCaptions('', false);
-    console.log('Speech recognition stopped');
+    console.log('Speech captions stopped (recognition continues for voice commands)');
 }
 
 /**
@@ -1703,6 +1758,56 @@ function toggleHandMenuMode() {
     }
     
     console.log('Hand menu mode toggled:', appState.handMenuMode ? 'enabled' : 'disabled');
+}
+
+/**
+ * Open hand menu at default position in center of screen
+ */
+function openHandMenuAtDefaultPosition() {
+    // Enable hand menu mode if not already enabled
+    if (!appState.handMenuMode) {
+        appState.handMenuMode = true;
+        
+        // Update UI
+        const handMenuToggle = document.getElementById('hand-menu-toggle');
+        if (handMenuToggle) {
+            handMenuToggle.classList.add('active');
+        }
+        
+        // Update state in sign recognition module
+        updateHandMenuMode();
+    }
+    
+    // Set hand menu to default position (centered)
+    if (typeof setHandMenuToDefaultPosition === 'function') {
+        setHandMenuToDefaultPosition();
+    } else {
+        console.warn('setHandMenuToDefaultPosition function not available');
+    }
+}
+
+/**
+ * Close hand menu (unlock and hide)
+ */
+function closeHandMenu() {
+    // Unlock the hand menu if it's locked
+    if (typeof unlockHandMenu === 'function') {
+        unlockHandMenu();
+    }
+    
+    // Hide the hand menu overlay
+    hideHandMenuOverlay();
+    
+    // Optionally disable hand menu mode
+    // Uncomment the following lines if you want to disable the mode when closing
+    // appState.handMenuMode = false;
+    // updateHandMenuMode();
+    // const handMenuToggle = document.getElementById('hand-menu-toggle');
+    // if (handMenuToggle) {
+    //     handMenuToggle.classList.remove('active');
+    // }
+    
+    console.log('Hand menu closed');
 }
 
 /**

@@ -58,8 +58,8 @@ let displayCallback = null;
 let animationFrameId = null;
 
 // Pinch detection state
-let PINCH_THRESHOLD = 0.05; // Distance threshold for pinch detection (tune as needed)
-const PINCH_DEBOUNCE_FRAMES = 3; // Number of consecutive frames to confirm state change
+let PINCH_THRESHOLD = 0.04; // Distance threshold for pinch detection (lower = more precise)
+const PINCH_DEBOUNCE_FRAMES = 2; // Number of consecutive frames to confirm state change (lower = faster response)
 let pinchStateHistory = []; // History of pinch states for debouncing
 let currentPinchState = false; // Current debounced pinch state
 let pinchStatusElement = null; // DOM element for pinch status display
@@ -2011,6 +2011,52 @@ function handlePinchClick(normalizedX, normalizedY) {
     
     console.log('Pinch click detected at:', screenCoords, 'from normalized:', { x: normalizedX, y: normalizedY });
     
+    // For hand menu, check if we're over a button first (more accurate)
+    if (handMenuModeEnabled && handMenuButtonElements.length > 0) {
+        // Check unlock button first
+        if (handMenuUnlockButton && handMenuLocked) {
+            const unlockRect = handMenuUnlockButton.getBoundingClientRect();
+            const isOverUnlock = (
+                screenCoords.x >= unlockRect.left - 5 &&
+                screenCoords.x <= unlockRect.right + 5 &&
+                screenCoords.y >= unlockRect.top - 5 &&
+                screenCoords.y <= unlockRect.bottom + 5
+            );
+            
+            if (isOverUnlock) {
+                console.log('✅ Pinch click on unlock button');
+                unlockHandMenu();
+                return;
+            }
+        }
+        
+        // Check hand menu buttons
+        for (const btn of handMenuButtonElements) {
+            if (!btn.element) continue;
+            
+            const rect = btn.element.getBoundingClientRect();
+            const isOverButton = (
+                screenCoords.x >= rect.left - 5 &&
+                screenCoords.x <= rect.right + 5 &&
+                screenCoords.y >= rect.top - 5 &&
+                screenCoords.y <= rect.bottom + 5
+            );
+            
+            if (isOverButton) {
+                console.log('✅ Pinch click on hand menu button:', btn.id);
+                // Trigger click on the button directly
+                if (btn.element.click) {
+                    btn.element.click();
+                } else if (btn.navItem && btn.navItem.click) {
+                    btn.navItem.click();
+                } else if (elementClickRegistry && btn.id && elementClickRegistry[btn.id]) {
+                    elementClickRegistry[btn.id]();
+                }
+                return;
+            }
+        }
+    }
+    
     // Find the element at this screen position
     // Temporarily hide overlay canvas to get the actual element underneath
     const canvas = document.getElementById('pinch-overlay');
@@ -2727,6 +2773,57 @@ export function unlockHandMenu() {
 }
 
 /**
+ * Set hand menu to default position in center of screen
+ * This creates a default quadrilateral centered on screen and locks it
+ */
+export function setHandMenuToDefaultPosition() {
+    if (!handMenuModeEnabled) {
+        console.warn('Hand menu mode not enabled, cannot set default position');
+        return;
+    }
+    
+    // Create default quadrilateral in center of screen
+    // Normalized coordinates (0-1): center is at 0.5, 0.5
+    // Default size: 60% of screen width and 70% of screen height to show all buttons
+    const centerX = 0.5;
+    const centerY = 0.5;
+    const width = 0.6;  // 60% of screen width
+    const height = 0.7; // 70% of screen height to accommodate all buttons
+    
+    const halfWidth = width / 2;
+    const halfHeight = height / 2;
+    
+    // Create rectangle quadrilateral
+    // Order: bottom-left, bottom-right, top-right, top-left
+    const defaultQuadrilateral = {
+        leftThumb: {
+            x: centerX - halfWidth,
+            y: centerY + halfHeight
+        },
+        rightThumb: {
+            x: centerX + halfWidth,
+            y: centerY + halfHeight
+        },
+        rightIndex: {
+            x: centerX + halfWidth,
+            y: centerY - halfHeight
+        },
+        leftIndex: {
+            x: centerX - halfWidth,
+            y: centerY - halfHeight
+        }
+    };
+    
+    // Lock the menu at this position
+    lockHandMenu(defaultQuadrilateral);
+    
+    // Update overlay to show the menu
+    updateHandMenuOverlay(defaultQuadrilateral);
+    
+    console.log('Hand menu set to default position in center');
+}
+
+/**
  * Update hand menu lock indicator
  */
 function updateHandMenuLockIndicator() {
@@ -2886,11 +2983,12 @@ function updateHandMenuButtonHighlighting() {
     // Check if pinch is over unlock button first
     if (handMenuUnlockButton && handMenuLocked) {
         const unlockRect = handMenuUnlockButton.getBoundingClientRect();
+        // Add small padding for easier targeting (5px buffer)
         const isOverUnlock = (
-            screenCoords.x >= unlockRect.left &&
-            screenCoords.x <= unlockRect.right &&
-            screenCoords.y >= unlockRect.top &&
-            screenCoords.y <= unlockRect.bottom
+            screenCoords.x >= unlockRect.left - 5 &&
+            screenCoords.x <= unlockRect.right + 5 &&
+            screenCoords.y >= unlockRect.top - 5 &&
+            screenCoords.y <= unlockRect.bottom + 5
         );
         
         if (isOverUnlock && currentPinchState) {
@@ -2902,21 +3000,53 @@ function updateHandMenuButtonHighlighting() {
     
     // Check which button the pinch is over
     if (handMenuButtonElements.length > 0) {
+        let highlightedButton = null;
+        
         handMenuButtonElements.forEach(btn => {
             if (!btn.element) {
                 return;
             }
             
             const rect = btn.element.getBoundingClientRect();
+            // Add small padding for easier targeting (5px buffer)
             const isOverButton = (
-                screenCoords.x >= rect.left &&
-                screenCoords.x <= rect.right &&
-                screenCoords.y >= rect.top &&
-                screenCoords.y <= rect.bottom
+                screenCoords.x >= rect.left - 5 &&
+                screenCoords.x <= rect.right + 5 &&
+                screenCoords.y >= rect.top - 5 &&
+                screenCoords.y <= rect.bottom + 5
             );
             
             if (isOverButton && currentPinchState) {
-                btn.element.classList.add('highlighted');
+                // Only highlight the first button found (closest to center if overlapping)
+                if (!highlightedButton) {
+                    btn.element.classList.add('highlighted');
+                    highlightedButton = btn;
+                } else {
+                    // Check which button center is closer to pinch location
+                    const currentCenterX = rect.left + rect.width / 2;
+                    const currentCenterY = rect.top + rect.height / 2;
+                    const currentDist = Math.sqrt(
+                        Math.pow(screenCoords.x - currentCenterX, 2) +
+                        Math.pow(screenCoords.y - currentCenterY, 2)
+                    );
+                    
+                    const highlightedRect = highlightedButton.element.getBoundingClientRect();
+                    const highlightedCenterX = highlightedRect.left + highlightedRect.width / 2;
+                    const highlightedCenterY = highlightedRect.top + highlightedRect.height / 2;
+                    const highlightedDist = Math.sqrt(
+                        Math.pow(screenCoords.x - highlightedCenterX, 2) +
+                        Math.pow(screenCoords.y - highlightedCenterY, 2)
+                    );
+                    
+                    // If current button is closer, switch highlight
+                    if (currentDist < highlightedDist) {
+                        highlightedButton.element.classList.remove('highlighted');
+                        btn.element.classList.add('highlighted');
+                        highlightedButton = btn;
+                    } else {
+                        btn.element.classList.remove('highlighted');
+                    }
+                }
             } else {
                 btn.element.classList.remove('highlighted');
             }
