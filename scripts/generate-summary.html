@@ -117,30 +117,66 @@
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
         import { getFirestore, doc, getDoc, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firestore.js';
         
-        // Firebase config - loaded from your project config
-        // Note: Firebase client API keys are safe to expose in browser
-        // They are public keys that work with Firestore security rules
-        const firebaseConfig = {
-            apiKey: "AIzaSyBVt34mIMaY3lodiRlS-qh0XmVDP9XkqwQ",
-            authDomain: "acceens-5f3ad.firebaseapp.com",
-            projectId: "acceens-5f3ad",
-            storageBucket: "acceens-5f3ad.firebasestorage.app",
-            messagingSenderId: "384687344035",
-            appId: "1:384687344035:web:e129c33106e4a7849eb216",
-            measurementId: "G-4K07SBY9RL"
-        };
-        
+        // Firebase config - MUST be configured
+        // IMPORTANT: Create scripts/firebase-config.json from firebase-config.json.example
+        // Copy your Firebase config from: Firebase Console > Project Settings > Your apps
+        // 
         // SECURITY NOTE: 
-        // - Firebase API keys are PUBLIC and safe to expose in client code
+        // - Firebase client API keys are PUBLIC but should NOT be hardcoded in git
         // - They work with Firestore security rules to protect your data
+        // - Get your config from: Firebase Console > Project Settings > Your apps
         // - OpenAI API key should NEVER be hardcoded - user enters it in the form
         
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
+        // Load Firebase config from external file (not in git)
+        let firebaseConfig = null;
+        
+        async function loadFirebaseConfig() {
+            try {
+                const response = await fetch('./firebase-config.json');
+                if (response.ok) {
+                    firebaseConfig = await response.json();
+                    return true;
+                }
+            } catch (e) {
+                console.error('Could not load firebase-config.json:', e);
+            }
+            return false;
+        }
+        
+        // Initialize Firebase after config is loaded
+        let app, db;
+        
+        async function initFirebase() {
+            const configLoaded = await loadFirebaseConfig();
+            if (!configLoaded || !firebaseConfig || !firebaseConfig.apiKey) {
+                alert('ERROR: Firebase configuration missing!\n\n' +
+                      'Please create scripts/firebase-config.json from firebase-config.json.example\n' +
+                      'Get your config from: Firebase Console > Project Settings > Your apps');
+                document.body.innerHTML = '<div class="container"><h1>Configuration Required</h1>' +
+                    '<p>Please create <code>scripts/firebase-config.json</code> from <code>firebase-config.json.example</code></p>' +
+                    '<p>Get your Firebase config from: Firebase Console > Project Settings > Your apps</p></div>';
+                return false;
+            }
+            
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            return true;
+        }
+        
+        // Initialize on page load
+        await initFirebase();
         
         // Make functions available globally
         window.generateSummary = async function() {
+            // Ensure Firebase is initialized
+            if (!app || !db) {
+                const initialized = await initFirebase();
+                if (!initialized) {
+                    showStatus('Firebase not initialized. Please configure firebase-config.json', 'error');
+                    return;
+                }
+            }
+            
             const interactionId = document.getElementById('interactionId').value.trim();
             const openaiKey = document.getElementById('openaiKey').value.trim();
             const statusDiv = document.getElementById('status');

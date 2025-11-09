@@ -15,6 +15,7 @@ serviceAccountKey.json
 firebase-service-account.json
 *.secret
 secrets/
+scripts/firebase-config.json
 
 # Firebase
 .firebase/
