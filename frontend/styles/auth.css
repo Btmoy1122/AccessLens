@@ -1,0 +1,317 @@
+/* Authentication Pages Styles */
+
+/* Override main.css styles for auth pages - MUST be first */
+body.auth-page,
+body.auth-page * {
+    pointer-events: auto !important;
+}
+
+body.auth-page {
+    overflow: auto !important;
+    background: var(--bg-primary, #121212) !important;
+    color: var(--text-primary, #E0E0E0) !important;
+    width: 100vw;
+    height: 100vh;
+    position: relative !important;
+}
+
+html:has(.auth-page),
+html:has(.auth-page) body {
+    background: var(--bg-primary, #121212) !important;
+    overflow: auto !important;
+}
+
+/* Hide any video/camera elements on auth pages */
+body.auth-page video,
+body.auth-page canvas,
+body.auth-page .camera-video,
+body.auth-page .pinch-overlay,
+body.auth-page .ar-container,
+body.auth-page .sidebar,
+body.auth-page .sidebar-overlay {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    z-index: -1 !important;
+}
+
+/* Ensure form inputs are always on top and clickable */
+body.auth-page .auth-form,
+body.auth-page .form-group,
+body.auth-page input,
+body.auth-page button,
+body.auth-page .auth-card {
+    position: relative !important;
+    z-index: 10000 !important;
+    pointer-events: auto !important;
+}
+
+.auth-page {
+    background: var(--bg-primary, #121212);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    overflow: auto;
+}
+
+.auth-container {
+    width: 100%;
+    max-width: 400px;
+    position: relative;
+    z-index: 1000;
+    pointer-events: auto;
+}
+
+.auth-card {
+    background: var(--bg-secondary, #1E1E2D);
+    border-radius: 16px;
+    padding: 40px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+    position: relative;
+    z-index: 1000;
+    pointer-events: auto;
+    max-width: 440px;
+    width: 100%;
+}
+
+.auth-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.auth-header h1.auth-title {
+    font-size: 42px;
+    font-weight: 700;
+    color: var(--text-primary, #E0E0E0);
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+}
+
+.auth-header h1 {
+    font-size: 42px;
+    font-weight: 700;
+    color: var(--text-primary, #E0E0E0);
+    margin-bottom: 8px;
+    letter-spacing: -0.02em;
+}
+
+.auth-subtitle {
+    color: var(--text-secondary, #B0B0B0);
+    font-size: 14px;
+    margin: 0;
+}
+
+.auth-description {
+    text-align: center;
+    color: var(--text-secondary, #B0B0B0);
+    font-size: 14px;
+    line-height: 1.6;
+    margin-bottom: 30px;
+}
+
+.auth-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.btn-auth {
+    width: 100%;
+    padding: 14px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.2s;
+}
+
+.btn-google {
+    background: var(--accent-primary, #4285f4);
+    color: white;
+}
+
+.btn-google:hover {
+    background: var(--accent-hover, #357ae8);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4);
+}
+
+.btn-primary {
+    background: var(--accent-primary, #4285f4);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--accent-hover, #357ae8);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(66, 133, 244, 0.4);
+}
+
+.btn-guest {
+    background: var(--bg-tertiary, #2A2A3A);
+    color: var(--text-primary, #E0E0E0);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
+}
+
+.btn-guest:hover {
+    background: var(--bg-secondary, #1E1E2D);
+    border-color: var(--border-hover, rgba(255, 255, 255, 0.2));
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.btn-auth:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-icon {
+    font-size: 20px;
+}
+
+.auth-divider {
+    text-align: center;
+    position: relative;
+    margin: 20px 0;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 45%;
+    height: 1px;
+    background: var(--border-color, rgba(255, 255, 255, 0.1));
+}
+
+.auth-divider::before {
+    left: 0;
+}
+
+.auth-divider::after {
+    right: 0;
+}
+
+.auth-divider span {
+    background: var(--bg-secondary, #1E1E2D);
+    padding: 0 10px;
+    color: var(--text-muted, #808080);
+    font-size: 14px;
+}
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    position: relative;
+    z-index: 1001;
+    pointer-events: auto;
+}
+
+.form-group label {
+    pointer-events: auto;
+    cursor: text;
+}
+
+.form-group input {
+    width: 100% !important;
+    padding: 12px 16px !important;
+    border: 2px solid var(--border-color, rgba(255, 255, 255, 0.1)) !important;
+    border-radius: 8px !important;
+    font-size: 16px !important;
+    transition: border-color 0.2s;
+    background: var(--bg-tertiary, #2A2A3A) !important;
+    color: var(--text-primary, #E0E0E0) !important;
+    box-sizing: border-box !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    pointer-events: auto !important;
+    z-index: 10000 !important;
+    position: relative !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    display: block !important;
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    user-select: text !important;
+}
+
+.form-group input[type="password"],
+.form-group input[type="email"] {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    user-select: text !important;
+    cursor: text !important;
+}
+
+.form-group input[type="password"] {
+    -webkit-text-security: disc;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--accent-primary, #4285f4) !important;
+    box-shadow: 0 0 0 3px var(--accent-light, rgba(66, 133, 244, 0.1));
+}
+
+.form-group input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--bg-tertiary, #2A2A3A) !important;
+}
+
+.form-group input::placeholder {
+    color: var(--text-muted, #808080);
+    opacity: 1;
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--accent-primary, #4285f4);
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 8px;
+    transition: color 0.2s;
+}
+
+.btn-link:hover {
+    color: var(--accent-hover, #357ae8);
+}
+
+.auth-error {
+    background: rgba(255, 107, 107, 0.1);
+    color: #ff6b6b;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-top: 16px;
+    border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
+.auth-loading {
+    text-align: center;
+    color: var(--text-secondary, #B0B0B0);
+    padding: 20px;
+    font-size: 14px;
+}
+

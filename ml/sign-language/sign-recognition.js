@@ -1,16 +1,22 @@
 /**
  * Sign Language Recognition Module
  * 
- * Provides ASL gesture recognition using MediaPipe Hands and TensorFlow.js
+ * Provides hand gesture recognition using MediaPipe Hands for pinch-to-click and hand menu
  * 
  * Features:
  * - MediaPipe Hands integration for real-time hand landmark detection
- * - TensorFlow.js ASL alphabet classifier (A-Z)
- * - Temporal landmark buffering (15-30 frames) for word-level recognition
- * - AR text overlay display via captions container
+ * - Pinch-to-click functionality
+ * - Hand menu navigation
+ * - Temporal landmark buffering for gesture recognition
  */
 
-import { Hands } from '@mediapipe/hands';
+// MediaPipe Hands - loaded dynamically to avoid blocking initial load
+// In production builds, Vite should bundle this and rewrite the import to the chunk URL
+let Hands = null;
+let mediapipeLoading = false;
+let mediapipeLoadPromise = null;
+
+// Import TensorFlow (this is always bundled)
 import * as tf from '@tensorflow/tfjs';
 
 // Import element click registry for pinch-to-click functionality
@@ -120,16 +126,25 @@ export async function initSignRecognition() {
 
     try {
         // Initialize MediaPipe Hands
-        await initializeMediaPipe();
+        const mediapipeReady = await initializeMediaPipe();
+        
+        if (!mediapipeReady) {
+            console.warn('MediaPipe initialization failed - hand detection will not be available');
+            console.warn('This is not critical - other features will continue to work');
+            isInitialized = false;
+            return false;
+        }
         
         // Load TensorFlow.js ASL model (optional - will work with MediaPipe alone for testing)
+        // Note: We're not using ASL classification anymore, but keeping this for future use
         await loadASLModel();
         
         isInitialized = true;
-        console.log('Sign language recognition initialized successfully');
+        console.log('Hand detection initialized successfully');
         return true;
     } catch (error) {
-        console.error('Error initializing sign language recognition:', error);
+        console.error('Error initializing hand detection:', error);
+        console.error('Hand detection will not be available, but other features will work');
         isInitialized = false;
         return false;
     }
@@ -138,28 +153,257 @@ export async function initSignRecognition() {
 /**
  * Initialize MediaPipe Hands
  */
+/**
+ * Load MediaPipe Hands dynamically
+ * Tries multiple methods to load MediaPipe Hands
+ */
+async function loadMediaPipeHands() {
+    // Check if already loaded
+    if (Hands) {
+        return Hands;
+    }
+    
+    // Check if already loading
+    if (mediapipeLoading && mediapipeLoadPromise) {
+        await mediapipeLoadPromise;
+        return Hands;
+    }
+    
+    mediapipeLoading = true;
+    const packageVersion = '0.4.1675469240';
+    
+    // Create promise for loading
+    mediapipeLoadPromise = (async () => {
+        try {
+            // Method 1: Try dynamic import from @mediapipe/hands
+            // Vite should rewrite this to the bundled chunk in production
+            // Use a string literal (not a variable) so Vite can statically analyze it
+            try {
+                console.log('Attempting to load MediaPipe Hands from bundled module...');
+                
+                // IMPORTANT: Use a string literal directly so Vite can analyze and rewrite it
+                // Vite will rewrite '@mediapipe/hands' to the chunk URL in the build
+                // DO NOT use @vite-ignore here - we want Vite to process and rewrite this import
+                const mediapipeModule = await import('@mediapipe/hands');
+                
+                console.log('MediaPipe module loaded, inspecting structure...');
+                console.log('Module type:', typeof mediapipeModule);
+                console.log('Module keys:', Object.keys(mediapipeModule));
+                
+                // Try to extract Hands class from various export patterns
+                const extractHands = (module) => {
+                    // Pattern 1: Direct named export
+                    if (module.Hands && typeof module.Hands === 'function') {
+                        console.log('Found Hands as named export');
+                        return module.Hands;
+                    }
+                    
+                    // Pattern 2: Default export with Hands property
+                    if (module.default) {
+                        if (module.default.Hands && typeof module.default.Hands === 'function') {
+                            console.log('Found Hands as default.Hands');
+                            return module.default.Hands;
+                        }
+                        
+                        // Pattern 3: Default IS the Hands class
+                        if (typeof module.default === 'function') {
+                            const proto = module.default.prototype;
+                            if (proto && ('send' in proto || 'onResults' in proto || 'setOptions' in proto || 'close' in proto)) {
+                                console.log('Found Hands as default function');
+                                return module.default;
+                            }
+                        }
+                        
+                        // Pattern 4: Nested default (sometimes esm.sh wraps it)
+                        if (module.default.default && module.default.default.Hands) {
+                            console.log('Found Hands as default.default.Hands');
+                            return module.default.default.Hands;
+                        }
+                    }
+                    
+                    // Pattern 5: Search all exports recursively
+                    const searchExports = (obj, path = '') => {
+                        for (const key in obj) {
+                            if (key === '__esModule' || key === 'default') continue;
+                            const value = obj[key];
+                            
+                            if (typeof value === 'function' && value.prototype) {
+                                const proto = value.prototype;
+                                const hasMediaPipeMethods = ['send', 'onResults', 'setOptions', 'close', 'initialize'].some(m => m in proto);
+                                if (hasMediaPipeMethods) {
+                                    console.log(`Found Hands-like class at ${path}${key}`);
+                                    return value;
+                                }
+                            } else if (value && typeof value === 'object' && !Array.isArray(value) && value !== null) {
+                                const found = searchExports(value, `${path}${key}.`);
+                                if (found) return found;
+                            }
+                        }
+                        return null;
+                    };
+                    
+                    return searchExports(module);
+                };
+                
+                Hands = extractHands(mediapipeModule);
+                
+                if (Hands && typeof Hands === 'function') {
+                    console.log('✅ MediaPipe Hands loaded successfully!');
+                    console.log('Hands class name:', Hands.name || 'anonymous');
+                    console.log('Hands prototype methods:', Object.getOwnPropertyNames(Hands.prototype).slice(0, 5));
+                    return Hands;
+                } else {
+                    console.error('❌ MediaPipe module loaded but Hands class not found');
+                    console.error('Full module structure:', mediapipeModule);
+                    console.error('Available exports:', Object.keys(mediapipeModule));
+                    if (mediapipeModule.default) {
+                        console.error('Default export type:', typeof mediapipeModule.default);
+                        if (typeof mediapipeModule.default === 'object') {
+                            console.error('Default export keys:', Object.keys(mediapipeModule.default));
+                        }
+                    }
+                    // Don't throw here - fall through to CDN loading
+                }
+            } catch (importError) {
+                console.warn('⚠️ Bundled import failed:', importError.message);
+                console.warn('Error details:', importError);
+                console.log('Will try loading from CDN as fallback...');
+            }
+            
+            // Method 2: Load from CDN using esm.sh (converts CommonJS to ES modules)
+            // esm.sh can serve MediaPipe Hands as a proper ES module
+            const cdnUrls = [
+                `https://esm.sh/@mediapipe/hands@${packageVersion}`,
+                `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${packageVersion}/hands.js`,
+                `https://unpkg.com/@mediapipe/hands@${packageVersion}/hands.js`
+            ];
+            
+            for (const cdnUrl of cdnUrls) {
+                try {
+                    console.log(`Attempting to load MediaPipe Hands from CDN: ${cdnUrl}`);
+                    // Use dynamic import with @vite-ignore to bypass Vite's bundling
+                    const mediapipeModule = await import(/* @vite-ignore */ cdnUrl);
+                    
+                    console.log('CDN module loaded, keys:', Object.keys(mediapipeModule));
+                    
+                    // Try to find Hands in the module - check multiple patterns
+                    if (mediapipeModule.Hands) {
+                        Hands = mediapipeModule.Hands;
+                        console.log('Found Hands as named export');
+                    } else if (mediapipeModule.default) {
+                        if (mediapipeModule.default.Hands) {
+                            Hands = mediapipeModule.default.Hands;
+                            console.log('Found Hands as default.Hands');
+                        } else if (typeof mediapipeModule.default === 'function') {
+                            // Check if default is the Hands class
+                            const proto = mediapipeModule.default.prototype;
+                            if (proto && ('send' in proto || 'onResults' in proto || 'setOptions' in proto)) {
+                                Hands = mediapipeModule.default;
+                                console.log('Found Hands as default function');
+                            }
+                        } else if (mediapipeModule.default.default && mediapipeModule.default.default.Hands) {
+                            // Nested default (esm.sh sometimes wraps)
+                            Hands = mediapipeModule.default.default.Hands;
+                            console.log('Found Hands as default.default.Hands');
+                        }
+                    }
+                    
+                    // Search all exports for a constructor with MediaPipe methods
+                    if (!Hands) {
+                        const searchInModule = (module, path = '') => {
+                            for (const key in module) {
+                                if (key === '__esModule') continue;
+                                const value = module[key];
+                                if (typeof value === 'function' && value.prototype) {
+                                    const proto = value.prototype;
+                                    if ('send' in proto || 'onResults' in proto || 'setOptions' in proto || 'close' in proto) {
+                                        console.log(`Found Hands-like class at ${path}${key}`);
+                                        return value;
+                                    }
+                                } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+                                    // Recursively search nested objects
+                                    const found = searchInModule(value, `${path}${key}.`);
+                                    if (found) return found;
+                                }
+                            }
+                            return null;
+                        };
+                        Hands = searchInModule(mediapipeModule);
+                    }
+                    
+                    if (Hands && typeof Hands === 'function') {
+                        console.log(`✅ MediaPipe Hands loaded from CDN: ${cdnUrl}`);
+                        return Hands;
+                    } else {
+                        console.warn(`CDN module loaded but Hands not found. Available keys:`, Object.keys(mediapipeModule));
+                        if (mediapipeModule.default) {
+                            console.warn('Default export type:', typeof mediapipeModule.default);
+                            if (typeof mediapipeModule.default === 'object') {
+                                console.warn('Default export keys:', Object.keys(mediapipeModule.default));
+                            }
+                        }
+                    }
+                } catch (cdnError) {
+                    console.log(`CDN import failed (${cdnUrl}):`, cdnError.message);
+                    continue;
+                }
+            }
+            
+            // All methods failed
+            throw new Error('All MediaPipe loading methods failed. MediaPipe Hands could not be loaded.');
+            
+        } catch (error) {
+            console.error('❌ Failed to load MediaPipe Hands:', error);
+            throw error;
+        } finally {
+            mediapipeLoading = false;
+        }
+    })();
+    
+    await mediapipeLoadPromise;
+    return Hands;
+}
+
 async function initializeMediaPipe() {
     try {
+        // Load MediaPipe Hands (tries npm first, then CDN)
+        await loadMediaPipeHands();
+        
+        if (!Hands) {
+            throw new Error('MediaPipe Hands class not found after loading');
+        }
+        
+        console.log('MediaPipe Hands class loaded successfully');
+        
         // MediaPipe Hands configuration
         // When using from npm, MediaPipe automatically resolves files from node_modules
         // We only need to provide locateFile if files aren't found automatically
         hands = new Hands({
             locateFile: (file) => {
                 // MediaPipe Hands needs to load various asset files (WASM, models, etc.)
-                // In Vite, we can serve from node_modules or use a CDN
-                // Using the installed package version for consistency
+                // Try to use the npm package first (works in dev and if Vite serves it)
+                // Fall back to CDN if needed, but prefer unpkg over jsdelivr for better reliability
                 const packageVersion = '0.4.1675469240';
                 
-                // Use jsdelivr CDN which properly serves npm packages
-                // jsdelivr has better compatibility with MediaPipe's file structure
-                const baseUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${packageVersion}`;
+                // In production (Vercel), try unpkg CDN which is more reliable than jsdelivr
+                // unpkg has better CORS and CSP compatibility
+                // Also try to use the same origin if MediaPipe files are available
+                const isProduction = window.location.hostname !== 'localhost' && 
+                                     !window.location.hostname.startsWith('192.168') &&
+                                     !window.location.hostname.startsWith('127.0.0.1');
                 
-                // Return the file path - MediaPipe will construct the full URL
-                // Note: MediaPipe may request files with paths like:
-                // - "hands_solution_packed_assets.data"
-                // - "third_party/mediapipe/modules/palm_detection/palm_detection_lite.tflite"
-                // - "_wasm/hands_solution_packed_assets_loader.js"
-                return `${baseUrl}/${file}`;
+                // Always use unpkg CDN - it's more reliable than jsdelivr
+                // unpkg.com has better CORS headers and works better with Vercel
+                // It's also faster and more reliable for MediaPipe assets
+                const baseUrl = `https://unpkg.com/@mediapipe/hands@${packageVersion}`;
+                const fullUrl = `${baseUrl}/${file}`;
+                
+                // Log in development for debugging
+                if (!isProduction) {
+                    console.log(`MediaPipe loading: ${file} from ${fullUrl}`);
+                }
+                
+                return fullUrl;
             }
         });
 
@@ -190,16 +434,24 @@ async function initializeMediaPipe() {
             console.error('1. Slow internet connection (MediaPipe files are large)');
             console.error('2. CDN access issues');
             console.error('3. Browser compatibility issues');
+            console.error('4. Build/bundling configuration issues');
             isMediaPipeReady = false;
-            throw new Error('MediaPipe initialization failed - assets not loading');
+            // Return false instead of throwing to allow graceful degradation
+            return false;
         }
         
         console.log('MediaPipe Hands initialization complete and verified');
+        return true;
     } catch (error) {
         console.error('Error initializing MediaPipe Hands:', error);
         console.error('MediaPipe may not be fully compatible with this setup');
+        console.error('Error details:', error.message);
+        if (error.stack) {
+            console.error('Stack trace:', error.stack);
+        }
         isMediaPipeReady = false;
-        throw error;
+        // Return false instead of throwing to allow graceful degradation
+        return false;
     }
 }
 
@@ -211,21 +463,25 @@ async function waitForMediaPipeReadyWithTest() {
     console.log('Waiting for MediaPipe to load assets from CDN...');
     console.log('This requires downloading large files - may take 30-60 seconds on slow connections');
     
-    // First, check if CDN is accessible
+    // First, check if CDN is accessible (using unpkg)
     const packageVersion = '0.4.1675469240';
-    const testUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${packageVersion}/hands_solution_packed_assets.data`;
+    const testUrl = `https://unpkg.com/@mediapipe/hands@${packageVersion}/hands_solution_packed_assets.data`;
     
-    console.log('Testing CDN accessibility...');
+    console.log('Testing CDN accessibility (unpkg)...');
     try {
+        // Try to fetch the file to verify CDN is accessible
         const response = await fetch(testUrl, { method: 'HEAD', mode: 'no-cors' });
-        console.log('CDN appears accessible');
+        console.log('CDN (unpkg) appears accessible');
     } catch (error) {
         console.warn('CDN accessibility test failed (may be CORS, but files might still load)');
+        console.warn('This is normal - MediaPipe will attempt to load files anyway');
     }
     
     // Wait initial period for basic loading
-    console.log('Waiting 10 seconds for initial asset loading...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // MediaPipe files are large (10+ MB), so we need to wait for them to download
+    console.log('Waiting 5 seconds for initial asset loading from unpkg CDN...');
+    console.log('MediaPipe files are large - this may take 30-60 seconds on slow connections');
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Reduced from 10s to 5s
     console.log('Initial wait complete, testing MediaPipe readiness...');
     
     // Try to detect if MediaPipe is ready by checking if we can send a test frame
@@ -327,6 +583,8 @@ async function waitForMediaPipeReadyWithTest() {
     console.error('3. Check internet connection speed');
     console.error('4. Wait longer (some connections need 1-2 minutes)');
     console.error('5. Serve MediaPipe files locally (see docs/MEDIAPIPE_CDN_ISSUES.md)');
+    console.error('6. Check browser console Network tab - look for failed requests to unpkg.com');
+    console.error('7. Try using Chrome/Edge browser (better MediaPipe support)');
     
     isMediaPipeReady = false;
     return false;

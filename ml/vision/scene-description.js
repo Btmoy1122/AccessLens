@@ -471,6 +471,11 @@ function generateDescription(predictions) {
         if (prediction.class === 'person' && prediction.bbox) {
             const matchingFace = findMatchingFace(prediction, recognizedFaces);
             if (matchingFace && matchingFace.name) {
+                // Check if this is the user's own face (isSelf flag)
+                if (matchingFace.isSelf === true) {
+                    // Use "you" instead of name for the user
+                    return 'you';
+                }
                 // Use person's name instead of "person"
                 return matchingFace.name;
             }
@@ -493,6 +498,10 @@ function generateDescription(predictions) {
     
     // Helper function to check if an object is a recognized person (name)
     const isName = (obj) => {
+        // "you" is treated as a name (the user themselves)
+        if (obj === 'you') {
+            return true;
+        }
         // Names are typically capitalized single words that aren't common object names
         // Also exclude "unknown person" which should be treated as an object
         return obj !== 'person' && 
