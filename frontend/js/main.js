@@ -2649,8 +2649,15 @@ function updateSpeechBubblePosition() {
                 }
                 
                 // Use center of face box, at mouth level (approximately 60% down the face)
-                const faceCenterX = videoRect.left + offsetX + (box.x + box.width / 2) * scaleX;
+                let faceCenterX = videoRect.left + offsetX + (box.x + box.width / 2) * scaleX;
                 const faceCenterY = videoRect.top + offsetY + (box.y + box.height * 0.65) * scaleY; // 65% down = mouth area
+                
+                // Account for camera mirror/flip state
+                // When video is mirrored with CSS (transform: scaleX(-1)), we need to flip the X coordinate
+                if (video.classList.contains('flipped')) {
+                    // Video is mirrored - flip X coordinate relative to video center
+                    faceCenterX = videoRect.left + videoRect.right - faceCenterX;
+                }
                 
                 positionSpeechBubbleAt(faceCenterX, faceCenterY);
             }
@@ -2659,7 +2666,18 @@ function updateSpeechBubblePosition() {
         
         // Position speech bubble above the mouth with smoothing
         const smoothedPos = smoothMouthPosition(mouthPos);
-        positionSpeechBubbleAt(smoothedPos.x, smoothedPos.y);
+        
+        // Account for camera mirror/flip state
+        // When video is mirrored with CSS (transform: scaleX(-1)), we need to flip the X coordinate
+        let adjustedX = smoothedPos.x;
+        if (video.classList.contains('flipped')) {
+            // Video is mirrored - flip X coordinate relative to video center
+            const videoRect = video.getBoundingClientRect();
+            // Mirror the X coordinate: distance from left edge becomes distance from right edge
+            adjustedX = videoRect.left + videoRect.right - smoothedPos.x;
+        }
+        
+        positionSpeechBubbleAt(adjustedX, smoothedPos.y);
         
     } catch (error) {
         console.error('Error updating speech bubble position:', error);
@@ -3045,6 +3063,13 @@ async function switchCamera(deviceId) {
         appState.cameraStream.getTracks().forEach(track => track.stop());
         appState.cameraStream = null;
     }
+    
+    // Reset speech bubble tracking when camera changes
+    // Clear position history to prevent stale coordinates from affecting new camera
+    positionHistory = [];
+    lastMouthPosition = null;
+    speechBubbleTrackingActive = false;
+    stopSpeechBubbleTracking();
     
     // Update selected camera
     appState.selectedCameraId = deviceId;

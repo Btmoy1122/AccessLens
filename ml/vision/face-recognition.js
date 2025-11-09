@@ -230,26 +230,36 @@ export function getPrimaryFaceOnScreen() {
 
 /**
  * Get the primary face with detection (including landmarks) for speech bubble positioning
+ * Returns the largest/most prominent face on screen, whether recognized or not
+ * This allows speech bubbles to follow any detected face, not just recognized ones
  * 
  * @returns {Object|null} Face object with { faceId, name, faceKey, detection } or null
  */
 export function getPrimaryFaceWithDetection() {
-    const recognizedFaces = getAllRecognizedFaces();
+    // Get all active faces (recognized and unknown) for speech bubble tracking
+    // This allows tracking of any detected face, not just recognized ones
+    const activeFaces = getAllActiveFaces();
     
-    if (recognizedFaces.length === 0) {
+    if (activeFaces.length === 0) {
         return null;
     }
     
-    // If only one recognized face, return it with detection
-    if (recognizedFaces.length === 1) {
-        return recognizedFaces[0];
+    // If only one face, return it with detection
+    if (activeFaces.length === 1) {
+        const face = activeFaces[0];
+        return {
+            faceId: face.faceData?.id || null,
+            name: face.faceData?.name || 'Unknown',
+            faceKey: face.faceKey,
+            detection: face.detection
+        };
     }
     
     // Multiple faces - find the largest one (most prominent)
     let largestFace = null;
     let largestSize = 0;
     
-    for (const face of recognizedFaces) {
+    for (const face of activeFaces) {
         if (face.detection && face.detection.detection && face.detection.detection.box) {
             const box = face.detection.detection.box;
             const size = box.width * box.height;
@@ -262,11 +272,22 @@ export function getPrimaryFaceWithDetection() {
     }
     
     if (largestFace) {
-        return largestFace;
+        return {
+            faceId: largestFace.faceData?.id || null,
+            name: largestFace.faceData?.name || 'Unknown',
+            faceKey: largestFace.faceKey,
+            detection: largestFace.detection
+        };
     }
     
-    // Fallback: return first recognized face
-    return recognizedFaces[0];
+    // Fallback: return first active face
+    const firstFace = activeFaces[0];
+    return {
+        faceId: firstFace.faceData?.id || null,
+        name: firstFace.faceData?.name || 'Unknown',
+        faceKey: firstFace.faceKey,
+        detection: firstFace.detection
+    };
 }
 
 /**
@@ -1178,6 +1199,26 @@ export function getAllActiveFaces() {
             detection: pendingRegistration.detection,
             isRecognized: false
         });
+    }
+    
+    // Also add faces from unknown buffer (recently detected but not yet recognized)
+    // This ensures speech bubbles can track faces even if they're not recognized yet
+    const now = Date.now();
+    for (const [key, unknownFace] of unknownFacesBuffer.entries()) {
+        // Only include faces that were seen recently (within last 2 seconds)
+        // This prevents stale faces from being tracked
+        if (unknownFace.detection && (now - unknownFace.lastSeen < 2000)) {
+            // Check if this face is already in the faces array (as recognized or pending)
+            const alreadyAdded = faces.some(f => f.faceKey === key);
+            if (!alreadyAdded) {
+                faces.push({
+                    faceKey: key,
+                    faceData: { name: 'Unknown', notes: '' },
+                    detection: unknownFace.detection,
+                    isRecognized: false
+                });
+            }
+        }
     }
     
     return faces;
