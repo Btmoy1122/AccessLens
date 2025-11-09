@@ -58,7 +58,9 @@ import {
     clearPendingRegistration,
     reloadKnownFaces,
     getPrimaryFaceOnScreen,
-    getAllRecognizedFaces
+    getAllRecognizedFaces,
+    getPrimaryFaceWithDetection,
+    getMouthPosition
 } from '@ml/vision/face-recognition.js';
 import {
     initFaceOverlays,
@@ -111,6 +113,13 @@ let selectedFaceForMemory = null; // Selected face for current memory recording 
 // Shared across all face recognition callbacks
 const latestSummaryCache = new Map(); // Key: faceId, Value: { summary, timestamp }
 const SUMMARY_CACHE_TIMEOUT = 10000; // Refresh summary every 10 seconds
+
+// Speech bubble tracking state
+let speechBubbleTrackingActive = false; // Whether speech bubble should track face
+let speechBubbleUpdateAnimationFrame = null; // Animation frame ID for continuous updates
+let lastMouthPosition = null; // Last known mouth position for smoothing
+let positionHistory = []; // History of positions for smoothing (max 5)
+const MAX_POSITION_HISTORY = 5; // Keep last 5 positions for smoothing
 
 /**
  * Initialize the application
@@ -1329,6 +1338,10 @@ function setupFaceRecognitionCallbacks() {
         
         // Update View Memories button visibility based on recognized faces
         updateViewMemoriesButton();
+        
+        // Speech bubble position is now updated continuously via requestAnimationFrame
+        // when speechBubbleTrackingActive is true, so we don't need to update here
+        // This reduces redundant updates and improves performance
     });
     
     // Callback when a face is removed from cache
@@ -2460,12 +2473,20 @@ function stopFaceRecognition() {
  * Update captions display
  */
 function updateCaptions(text, isInterim = false) {
-    if (!captionsText) return;
+    if (!captionsText || !captionsContainer) return;
     
     if (!text || text.trim() === '') {
         // Hide captions
         captionsText.classList.remove('show', 'interim', 'error');
         captionsText.textContent = '';
+        // Stop tracking
+        speechBubbleTrackingActive = false;
+        stopSpeechBubbleTracking();
+        // Clear position history
+        positionHistory = [];
+        lastMouthPosition = null;
+        // Reset to default position
+        resetCaptionsToDefaultPosition();
         return;
     }
     
@@ -2483,6 +2504,293 @@ function updateCaptions(text, isInterim = false) {
     } else {
         captionsText.classList.remove('interim', 'error');
     }
+    
+    // Position speech bubble near mouth of speaker (if face recognition is enabled and face is detected)
+    // Only position for final results (not interim), and only for actual speech (not system messages)
+    if (appState.features.face.enabled && !isInterim && 
+        !text.includes('⏳') && !text.includes('✅') && !text.includes('❌') && 
+        !text.includes('💾') && !text.includes('👋') && !text.includes('👁️') &&
+        !text.includes('⚠️') && !text.includes('Listening') && text.trim().length > 0) {
+        // Enable speech bubble tracking
+        speechBubbleTrackingActive = true;
+        startSpeechBubbleTracking();
+        // Position speech bubble near mouth immediately when speech is detected
+        positionSpeechBubbleNearMouth();
+    } else {
+        // Disable speech bubble tracking for system messages
+        speechBubbleTrackingActive = false;
+        stopSpeechBubbleTracking();
+        // Clear position history when disabling tracking
+        positionHistory = [];
+        lastMouthPosition = null;
+        // Reset to default position for system messages or when conditions aren't met
+        if (isInterim || text.trim().length === 0 || 
+            text.includes('⏳') || text.includes('✅') || text.includes('❌') || 
+            text.includes('💾') || text.includes('👋') || text.includes('👁️') ||
+            text.includes('⚠️') || text.includes('Listening')) {
+            resetCaptionsToDefaultPosition();
+        }
+    }
+}
+
+/**
+ * Start continuous speech bubble tracking
+ * Updates position whenever face detection updates (every ~1 second)
+ * Uses smooth CSS transitions to follow face movement
+ */
+function startSpeechBubbleTracking() {
+    // Stop any existing tracking
+    stopSpeechBubbleTracking();
+    
+    if (!speechBubbleTrackingActive) {
+        return;
+    }
+    
+    // Update position immediately
+    updateSpeechBubblePosition();
+    
+    // Set up a moderate-frequency update loop for smooth tracking
+    // Update every 50ms (20fps) which is smooth and responsive
+    let lastUpdateTime = 0;
+    const UPDATE_INTERVAL = 50; // Update every 50ms (20fps)
+    
+    function updateLoop(currentTime) {
+        if (!speechBubbleTrackingActive || !captionsContainer || !captionsText || 
+            !captionsText.classList.contains('show') || !appState.features.face.enabled) {
+            speechBubbleTrackingActive = false;
+            return;
+        }
+        
+        // Throttle updates to every 50ms for smoother tracking (20fps)
+        if (currentTime - lastUpdateTime >= UPDATE_INTERVAL) {
+            updateSpeechBubblePosition();
+            lastUpdateTime = currentTime;
+        }
+        
+        speechBubbleUpdateAnimationFrame = requestAnimationFrame(updateLoop);
+    }
+    
+    // Start the loop
+    speechBubbleUpdateAnimationFrame = requestAnimationFrame(updateLoop);
+}
+
+/**
+ * Stop continuous speech bubble tracking
+ */
+function stopSpeechBubbleTracking() {
+    if (speechBubbleUpdateAnimationFrame !== null) {
+        cancelAnimationFrame(speechBubbleUpdateAnimationFrame);
+        speechBubbleUpdateAnimationFrame = null;
+    }
+}
+
+/**
+ * Position speech bubble near the mouth of the primary face
+ */
+function positionSpeechBubbleNearMouth() {
+    updateSpeechBubblePosition();
+}
+
+/**
+ * Update speech bubble position based on current face detection
+ * This is called when speech is detected and also during face updates to track face movement
+ */
+function updateSpeechBubblePosition() {
+    if (!captionsContainer || !captionsText) {
+        return;
+    }
+    
+    try {
+        // Get primary face with detection
+        const primaryFace = getPrimaryFaceWithDetection();
+        
+        if (!primaryFace || !primaryFace.detection) {
+            // No face detected - don't update position (keep bubble where it is)
+            return;
+        }
+        
+        const video = document.getElementById('camera-video');
+        if (!video) {
+            return;
+        }
+        
+        // Get mouth position from face landmarks
+        // The detection object structure from face-api.js:
+        // - detection.landmarks (landmarks object)
+        // - detection.detection.box (face bounding box)
+        // We need to pass the full detection object to getMouthPosition
+        const detection = primaryFace.detection;
+        
+        // Try to get mouth position from landmarks
+        const mouthPos = getMouthPosition(detection, video);
+        
+        if (!mouthPos) {
+            // No mouth position from landmarks - use face box as fallback
+            // The box might be at detection.detection.box or detection.box
+            const box = (detection.detection && detection.detection.box) || detection.box;
+            if (box) {
+                const videoRect = video.getBoundingClientRect();
+                const videoAspect = video.videoWidth / video.videoHeight;
+                const displayAspect = videoRect.width / videoRect.height;
+                
+                let scaleX = 1;
+                let scaleY = 1;
+                let offsetX = 0;
+                let offsetY = 0;
+                
+                if (videoAspect > displayAspect) {
+                    scaleY = videoRect.height / video.videoHeight;
+                    scaleX = scaleY;
+                    offsetX = (videoRect.width - video.videoWidth * scaleX) / 2;
+                } else {
+                    scaleX = videoRect.width / video.videoWidth;
+                    scaleY = scaleX;
+                    offsetY = (videoRect.height - video.videoHeight * scaleY) / 2;
+                }
+                
+                // Use center of face box, at mouth level (approximately 60% down the face)
+                const faceCenterX = videoRect.left + offsetX + (box.x + box.width / 2) * scaleX;
+                const faceCenterY = videoRect.top + offsetY + (box.y + box.height * 0.65) * scaleY; // 65% down = mouth area
+                
+                positionSpeechBubbleAt(faceCenterX, faceCenterY);
+            }
+            return;
+        }
+        
+        // Position speech bubble above the mouth with smoothing
+        const smoothedPos = smoothMouthPosition(mouthPos);
+        positionSpeechBubbleAt(smoothedPos.x, smoothedPos.y);
+        
+    } catch (error) {
+        console.error('Error updating speech bubble position:', error);
+    }
+}
+
+/**
+ * Smooth mouth position to reduce jitter
+ * Uses exponential moving average for smooth tracking
+ * 
+ * @param {Object} newPos - New mouth position { x, y }
+ * @returns {Object} Smoothed position { x, y }
+ */
+function smoothMouthPosition(newPos) {
+    if (!newPos || typeof newPos.x !== 'number' || typeof newPos.y !== 'number') {
+        // Return last known position if new position is invalid
+        return lastMouthPosition || newPos;
+    }
+    
+    // Add to history
+    positionHistory.push({ x: newPos.x, y: newPos.y, timestamp: Date.now() });
+    
+    // Keep only recent positions
+    if (positionHistory.length > MAX_POSITION_HISTORY) {
+        positionHistory.shift();
+    }
+    
+    // Remove old positions (older than 200ms)
+    const now = Date.now();
+    positionHistory = positionHistory.filter(p => now - p.timestamp < 200);
+    
+    if (positionHistory.length === 0) {
+        lastMouthPosition = newPos;
+        return newPos;
+    }
+    
+    // Use weighted average - give more weight to recent positions
+    let totalWeight = 0;
+    let smoothedX = 0;
+    let smoothedY = 0;
+    
+    for (let i = 0; i < positionHistory.length; i++) {
+        const pos = positionHistory[i];
+        // Exponential weighting: more recent = higher weight
+        const age = now - pos.timestamp;
+        const weight = Math.exp(-age / 100); // Decay over 100ms
+        
+        smoothedX += pos.x * weight;
+        smoothedY += pos.y * weight;
+        totalWeight += weight;
+    }
+    
+    if (totalWeight > 0) {
+        smoothedX = smoothedX / totalWeight;
+        smoothedY = smoothedY / totalWeight;
+    } else {
+        smoothedX = newPos.x;
+        smoothedY = newPos.y;
+    }
+    
+    // Update last known position
+    lastMouthPosition = { x: smoothedX, y: smoothedY };
+    
+    return lastMouthPosition;
+}
+
+/**
+ * Position speech bubble at specific screen coordinates
+ * @param {number} x - X coordinate in screen pixels
+ * @param {number} y - Y coordinate in screen pixels
+ */
+function positionSpeechBubbleAt(x, y) {
+    if (!captionsContainer) {
+        return;
+    }
+    
+    // Get container dimensions immediately (don't wait for requestAnimationFrame)
+    const containerRect = captionsContainer.getBoundingClientRect();
+    const containerWidth = containerRect.width > 0 ? containerRect.width : 300;
+    const containerHeight = containerRect.height > 0 ? containerRect.height : 60;
+    
+    // Position bubble above the mouth
+    // Calculate optimal offset based on container size
+    // Place bubble close to mouth but with enough space for readability
+    const offsetAboveMouth = Math.max(containerHeight + 12, 50); // At least 12px gap, min 50px from mouth
+    const bubbleX = x - containerWidth / 2; // Center bubble horizontally on mouth
+    const bubbleY = y - offsetAboveMouth; // Position above mouth
+    
+    // Constrain to viewport (keep bubble visible)
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    const minX = 10;
+    const maxX = viewportWidth - containerWidth - 10;
+    const minY = 10;
+    const maxY = viewportHeight - containerHeight - 10;
+    
+    // If bubble would go off screen, adjust position
+    let constrainedX = Math.max(minX, Math.min(bubbleX, maxX));
+    let constrainedY = Math.max(minY, Math.min(bubbleY, maxY));
+    
+    // If we had to adjust Y position, try to keep it near the face horizontally
+    if (Math.abs(constrainedY - bubbleY) > 10) {
+        // Bubble was constrained vertically - adjust X to stay near face
+        constrainedX = Math.max(minX, Math.min(x - containerWidth / 2, maxX));
+    }
+    
+    // Apply position with smooth transition for smooth following
+    captionsContainer.style.position = 'fixed';
+    captionsContainer.style.left = constrainedX + 'px';
+    captionsContainer.style.top = constrainedY + 'px';
+    captionsContainer.style.transform = 'none';
+    captionsContainer.style.width = 'auto';
+    captionsContainer.style.maxWidth = '400px';
+    captionsContainer.style.transition = 'left 0.08s linear, top 0.08s linear'; // Very responsive, linear for predictability
+    captionsContainer.classList.add('speech-bubble');
+}
+
+/**
+ * Reset captions to default position (bottom center)
+ */
+function resetCaptionsToDefaultPosition() {
+    if (!captionsContainer) return;
+    
+    captionsContainer.style.position = 'fixed';
+    captionsContainer.style.top = '85%';
+    captionsContainer.style.left = '50%';
+    captionsContainer.style.transform = 'translateX(-50%)';
+    captionsContainer.style.width = '90%';
+    captionsContainer.style.maxWidth = '800px';
+    captionsContainer.classList.remove('speech-bubble');
 }
 
 /**
