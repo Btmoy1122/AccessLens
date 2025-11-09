@@ -842,12 +842,6 @@ function initializeFeatureToggles() {
         toggleSpeech.addEventListener('click', () => toggleFeature('speech'));
     }
     
-    // Hand Detection Toggle (always enabled)
-    const toggleSign = document.getElementById('toggle-sign');
-    if (toggleSign) {
-        toggleSign.addEventListener('click', () => toggleFeature('sign'));
-    }
-    
     // Scene Description Toggle
     const toggleScene = document.getElementById('toggle-scene');
     if (toggleScene) {
@@ -864,50 +858,8 @@ function initializeFeatureToggles() {
     const helpBtn = document.getElementById('help-btn');
     if (helpBtn) {
         helpBtn.addEventListener('click', () => {
-            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Hand Detection - Hand tracking and gesture recognition (always on)\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click (always on)');
+            alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n\nNote: Hand Detection and Pinch to Click are always enabled when the camera is active.');
         });
-    }
-    
-    // Pinch to Click Toggle
-    const togglePinchClick = document.getElementById('toggle-pinch-click');
-    if (togglePinchClick) {
-        togglePinchClick.addEventListener('click', togglePinchToClick);
-    }
-}
-
-/**
- * Toggle pinch-to-click feature
- * Note: Pinch-to-click is always enabled when Hand Detection is active
- */
-function togglePinchToClick() {
-    // Pinch-to-click is always enabled when Hand Detection is active
-    // Just ensure it's enabled and show feedback
-    setPinchToClickEnabled(true);
-    updatePinchClickUI(true);
-    
-    console.log('Pinch-to-click is always enabled');
-}
-
-/**
- * Update pinch-to-click button UI
- */
-function updatePinchClickUI(enabled) {
-    const toggleButton = document.getElementById('toggle-pinch-click');
-    const statusElement = document.getElementById('status-pinch-click');
-    
-    if (toggleButton && statusElement) {
-        if (enabled) {
-            toggleButton.classList.add('active');
-            statusElement.textContent = 'On';
-        } else {
-            toggleButton.classList.remove('active');
-            statusElement.textContent = 'Off';
-        }
-    }
-    
-    // Update hand menu button states to reflect the change
-    if (typeof updateAllHandMenuButtonStates === 'function') {
-        updateAllHandMenuButtonStates();
     }
 }
 
@@ -936,17 +888,10 @@ function toggleFeature(featureName) {
             startListening();
         }
     } else if (featureName === 'sign') {
-        // Hand Detection is always enabled - prevent disabling
-        if (!appState.features.sign.enabled) {
-            // Re-enable it immediately
-            appState.features.sign.enabled = true;
-            updateFeatureUI('sign');
-            alert('Hand Detection is always enabled and cannot be turned off.');
-            return;
-        }
-        if (appState.features.sign.enabled) {
-            startSignRecognition();
-        }
+        // Hand Detection is always enabled - this should not be called anymore
+        // since the toggle button has been removed, but keep this for safety
+        appState.features.sign.enabled = true;
+        startSignRecognition();
     } else if (featureName === 'scene') {
         if (appState.features.scene.enabled) {
             startSceneDescription();
@@ -1087,10 +1032,6 @@ function initializeSpeechToText() {
             console.log('Voice command: Toggle speech');
             toggleFeature('speech');
         },
-        toggleSign: () => {
-            console.log('Voice command: Toggle sign language');
-            toggleFeature('sign');
-        },
         toggleScene: () => {
             console.log('Voice command: Toggle scene description');
             toggleFeature('scene');
@@ -1120,10 +1061,10 @@ function initializeSpeechToText() {
             // Show help dialog or list available commands
             const commands = [
                 'Open menu', 'Close menu', 'Toggle menu',
-                'Enable speech', 'Enable sign language',
+                'Enable speech',
                 'Enable scene description', 'Enable face recognition',
-                'Enable hand menu', 'Fix menu', 'Reset menu', // Updated help
-                'Mirror camera', 'Flip camera' // Updated help
+                'Enable hand menu', 'Fix menu', 'Reset menu',
+                'Mirror camera', 'Flip camera'
             ];
             alert(`Available Voice Commands:\n\n${commands.join('\n')}`);
         }
@@ -2937,13 +2878,9 @@ export const elementClickRegistry = {
         console.log('Pinch click: Toggling camera flip');
         toggleCameraFlip();
     },
-    'toggle-pinch-click': () => {
-        console.log('Pinch click: Toggling pinch-to-click');
-        togglePinchToClick();
-    },
     'help-btn': () => {
         console.log('Pinch click: Opening help');
-        alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Sign Language - ASL gesture recognition\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n• Pinch to Click - Use pinch gesture to click');
+        alert('AccessLens Help\n\nToggle features on/off using the sidebar.\n\nFeatures:\n• Speech Captions - Real-time speech to text\n• Scene Description - Audio narration\n• Face Recognition - Recognize saved faces\n\nSettings:\n• Mirror Camera - Flip video horizontally\n\nNote: Hand Detection and Pinch to Click are always enabled when the camera is active.');
     },
     'hand-menu-unlock-button': () => {
         console.log('Pinch click: Unlocking hand menu');

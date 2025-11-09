@@ -16,21 +16,7 @@
 
 ---
 
-### 2. Sign Language Interpreter
-**Location**: `ml/sign-language/sign-recognition.js`
-
-**Implementation**:
-- MediaPipe Hands for gesture detection
-- TensorFlow.js model for A-Z classification
-- AR text overlay for recognized signs
-
-**Status**: ⏳ Planned
-
-**Owner**: ML Developer
-
----
-
-### 3. Scene & Person Description
+### 2. Scene & Person Description
 **Location**: `ml/vision/scene-description.js`
 
 **Implementation**:
@@ -44,7 +30,7 @@
 
 ---
 
-### 4. AR Memory System
+### 3. AR Memory System
 **Location**: `ml/vision/face-recognition.js` + `backend/services/face-service.js`
 
 **Implementation**:

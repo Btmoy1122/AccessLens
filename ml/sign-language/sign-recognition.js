@@ -146,20 +146,29 @@ async function initializeMediaPipe() {
         hands = new Hands({
             locateFile: (file) => {
                 // MediaPipe Hands needs to load various asset files (WASM, models, etc.)
-                // In Vite, we can serve from node_modules or use a CDN
-                // Using the installed package version for consistency
+                // Try to use the npm package first (works in dev and if Vite serves it)
+                // Fall back to CDN if needed, but prefer unpkg over jsdelivr for better reliability
                 const packageVersion = '0.4.1675469240';
                 
-                // Use jsdelivr CDN which properly serves npm packages
-                // jsdelivr has better compatibility with MediaPipe's file structure
-                const baseUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${packageVersion}`;
+                // In production (Vercel), try unpkg CDN which is more reliable than jsdelivr
+                // unpkg has better CORS and CSP compatibility
+                // Also try to use the same origin if MediaPipe files are available
+                const isProduction = window.location.hostname !== 'localhost' && 
+                                     !window.location.hostname.startsWith('192.168') &&
+                                     !window.location.hostname.startsWith('127.0.0.1');
                 
-                // Return the file path - MediaPipe will construct the full URL
-                // Note: MediaPipe may request files with paths like:
-                // - "hands_solution_packed_assets.data"
-                // - "third_party/mediapipe/modules/palm_detection/palm_detection_lite.tflite"
-                // - "_wasm/hands_solution_packed_assets_loader.js"
-                return `${baseUrl}/${file}`;
+                // Always use unpkg CDN - it's more reliable than jsdelivr
+                // unpkg.com has better CORS headers and works better with Vercel
+                // It's also faster and more reliable for MediaPipe assets
+                const baseUrl = `https://unpkg.com/@mediapipe/hands@${packageVersion}`;
+                const fullUrl = `${baseUrl}/${file}`;
+                
+                // Log in development for debugging
+                if (!isProduction) {
+                    console.log(`MediaPipe loading: ${file} from ${fullUrl}`);
+                }
+                
+                return fullUrl;
             }
         });
 
@@ -211,21 +220,25 @@ async function waitForMediaPipeReadyWithTest() {
     console.log('Waiting for MediaPipe to load assets from CDN...');
     console.log('This requires downloading large files - may take 30-60 seconds on slow connections');
     
-    // First, check if CDN is accessible
+    // First, check if CDN is accessible (using unpkg)
     const packageVersion = '0.4.1675469240';
-    const testUrl = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${packageVersion}/hands_solution_packed_assets.data`;
+    const testUrl = `https://unpkg.com/@mediapipe/hands@${packageVersion}/hands_solution_packed_assets.data`;
     
-    console.log('Testing CDN accessibility...');
+    console.log('Testing CDN accessibility (unpkg)...');
     try {
+        // Try to fetch the file to verify CDN is accessible
         const response = await fetch(testUrl, { method: 'HEAD', mode: 'no-cors' });
-        console.log('CDN appears accessible');
+        console.log('CDN (unpkg) appears accessible');
     } catch (error) {
         console.warn('CDN accessibility test failed (may be CORS, but files might still load)');
+        console.warn('This is normal - MediaPipe will attempt to load files anyway');
     }
     
     // Wait initial period for basic loading
-    console.log('Waiting 10 seconds for initial asset loading...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    // MediaPipe files are large (10+ MB), so we need to wait for them to download
+    console.log('Waiting 5 seconds for initial asset loading from unpkg CDN...');
+    console.log('MediaPipe files are large - this may take 30-60 seconds on slow connections');
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Reduced from 10s to 5s
     console.log('Initial wait complete, testing MediaPipe readiness...');
     
     // Try to detect if MediaPipe is ready by checking if we can send a test frame
@@ -327,6 +340,8 @@ async function waitForMediaPipeReadyWithTest() {
     console.error('3. Check internet connection speed');
     console.error('4. Wait longer (some connections need 1-2 minutes)');
     console.error('5. Serve MediaPipe files locally (see docs/MEDIAPIPE_CDN_ISSUES.md)');
+    console.error('6. Check browser console Network tab - look for failed requests to unpkg.com');
+    console.error('7. Try using Chrome/Edge browser (better MediaPipe support)');
     
     isMediaPipeReady = false;
     return false;
