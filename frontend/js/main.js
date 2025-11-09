@@ -150,32 +150,6 @@ document.addEventListener('DOMContentLoaded', () => {
         console.error('Error initializing AccessLens:', error);
     }
 });
-        
-        // Show error message on screen
-        const errorDiv = document.createElement('div');
-        errorDiv.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(255, 0, 0, 0.9);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
-            z-index: 10000;
-            max-width: 500px;
-            text-align: center;
-        `;
-        errorDiv.innerHTML = `
-            <h2>Initialization Error</h2>
-            <p>${error.message}</p>
-            <p style="font-size: 12px; margin-top: 10px;">Check the browser console (F12) for more details.</p>
-        `;
-        document.body.appendChild(errorDiv);
-        
-        alert(`Error initializing AccessLens: ${error.message}\n\nPlease check the console (F12) for more details.`);
-    }
-});
 
 /**
  * Get and cache DOM elements
