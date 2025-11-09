@@ -38,6 +38,12 @@
         <span class="toggle-icon">☰</span>
     </button>
 
+    <!-- Hand Menu Mode Toggle Button -->
+    <button id="hand-menu-toggle" class="hand-menu-toggle" aria-label="Toggle hand menu mode">
+        <span class="toggle-icon">👋</span>
+        <span class="toggle-label">Hand Menu</span>
+    </button>
+
     <!-- Sidebar -->
     <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
@@ -128,6 +134,20 @@
     
     <!-- Face Overlays Container -->
     <div id="face-overlays" class="face-overlays"></div>
+    
+    <!-- Hand Menu Overlay Container -->
+    <div id="hand-menu-overlay" class="hand-menu-overlay" style="display: none;">
+        <svg id="hand-menu-quadrilateral" class="hand-menu-quadrilateral" viewBox="0 0 1 1" preserveAspectRatio="none">
+            <polygon id="quadrilateral-path" class="quadrilateral-path" points="0,1 1,1 1,0 0,0" />
+        </svg>
+        <div id="hand-menu-buttons" class="hand-menu-buttons"></div>
+    </div>
+    
+    <!-- Hand Menu Prompt (shown when hands are not detected) -->
+    <div id="hand-menu-prompt" class="hand-menu-prompt hidden">
+        <div>👋 Place both hands in view</div>
+        <div style="font-size: 14px; margin-top: 8px; opacity: 0.8;">Form an "L" shape with thumbs and index fingers</div>
+    </div>
     
     <!-- Face Registration Modal -->
     <div id="face-registration-modal" class="face-registration-modal" style="display: none;">

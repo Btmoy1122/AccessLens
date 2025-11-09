@@ -138,6 +138,56 @@ html {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+/* Hand Menu Mode Toggle Button */
+.hand-menu-toggle {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    width: 120px;
+    height: 60px;
+    background: rgba(74, 144, 226, 0.2);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(74, 144, 226, 0.4);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.hand-menu-toggle.active {
+    background: rgba(74, 144, 226, 0.6);
+    border-color: rgba(74, 144, 226, 0.8);
+    box-shadow: 0 0 20px rgba(74, 144, 226, 0.5);
+}
+
+.hand-menu-toggle:hover {
+    background: rgba(74, 144, 226, 0.3);
+    transform: scale(1.05);
+}
+
+.hand-menu-toggle:active {
+    transform: scale(0.95);
+}
+
+.hand-menu-toggle .toggle-label {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.hand-menu-toggle .toggle-icon {
+    font-size: 28px;
+    line-height: 1;
+}
+
 .sidebar-toggle:hover {
     background: rgba(255, 255, 255, 0.25);
     transform: scale(1.05);
@@ -857,6 +907,128 @@ button:focus-visible {
     color: #fff;
 }
 
+/* Hand Menu Overlay */
+.hand-menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 500;
+    pointer-events: none;
+}
+
+.hand-menu-quadrilateral {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.quadrilateral-path {
+    fill: rgba(74, 144, 226, 0.15);
+    stroke: rgba(74, 144, 226, 0.6);
+    stroke-width: 0.01;
+    stroke-dasharray: 0.02, 0.02;
+    transition: all 0.2s ease;
+}
+
+.hand-menu-buttons {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(auto-fit, minmax(40px, 1fr));
+    gap: 8px;
+    padding: 12px;
+    pointer-events: auto;
+    transform-origin: top left;
+}
+
+.hand-menu-button {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(10px);
+    border: 2px solid rgba(74, 144, 226, 0.5);
+    border-radius: 8px;
+    color: #222;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    min-height: 44px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hand-menu-button:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: rgba(74, 144, 226, 0.8);
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.hand-menu-button:active {
+    transform: scale(0.95);
+}
+
+.hand-menu-button.highlighted {
+    background: rgba(74, 144, 226, 0.9);
+    border-color: rgba(74, 144, 226, 1);
+    color: #fff;
+    box-shadow: 0 0 20px rgba(74, 144, 226, 0.6);
+}
+
+.hand-menu-button-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.hand-menu-button-label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.hand-menu-button.active {
+    background: rgba(74, 144, 226, 0.85);
+    border-color: rgba(74, 144, 226, 0.5);
+    color: #fff;
+}
+
+.hand-menu-prompt {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 20px 30px;
+    border-radius: 12px;
+    font-size: 16px;
+    text-align: center;
+    z-index: 501;
+    pointer-events: none;
+    border: 2px solid rgba(74, 144, 226, 0.5);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.hand-menu-prompt.hidden {
+    display: none;
+}
+
 /* Responsive modal */
 @media (max-width: 768px) {
     .modal-content {
@@ -873,5 +1045,21 @@ button:focus-visible {
         font-size: 12px;
         padding: 6px 10px;
         max-width: 150px;
+    }
+    
+    .hand-menu-button {
+        font-size: 12px;
+        padding: 8px 12px;
+        min-height: 40px;
+    }
+    
+    .hand-menu-toggle {
+        width: 100px;
+        height: 50px;
+        font-size: 20px;
+    }
+    
+    .hand-menu-toggle .toggle-label {
+        font-size: 10px;
     }
 }

@@ -22,7 +22,8 @@ import {
     setPinchToClickEnabled,
     isPinchToClickEnabled,
     setClickRegistry,
-    loadButtonPositions
+    loadButtonPositions,
+    setHandMenuMode
 } from '@ml/sign-language/sign-recognition.js';
 import { 
     initSceneDescription, 
@@ -61,6 +62,7 @@ const appState = {
     cameraFlipped: false, // Camera mirror/flip state
     availableCameras: [], // List of available camera devices
     selectedCameraId: null, // Currently selected camera device ID
+    handMenuMode: false, // Hand menu mode state
     features: {
         speech: { enabled: false },
         sign: { enabled: false },
@@ -107,11 +109,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Initialize camera flip toggle
         initializeCameraFlip();
         
-        // Initialize camera selector (will be populated after cameras are enumerated)
-        initializeCameraSelector();
-        
-        // Initialize ML modules (speech-to-text, scene description, etc.)
-        initializeMLModules();
+    // Initialize camera selector (will be populated after cameras are enumerated)
+    initializeCameraSelector();
+    
+    // Initialize hand menu mode toggle
+    initializeHandMenuToggle();
+    
+    // Initialize ML modules (speech-to-text, scene description, etc.)
+    initializeMLModules();
         
         // Initialize face overlays
         try {
@@ -1262,7 +1267,6 @@ function showARContainer() {
 }
 
 /**
-<<<<<<< HEAD
  * Initialize camera flip toggle
  */
 function initializeCameraFlip() {
@@ -1421,6 +1425,109 @@ window.addEventListener('resize', () => {
         }
     }
 });
+
+/**
+ * Initialize hand menu mode toggle
+ */
+function initializeHandMenuToggle() {
+    const handMenuToggle = document.getElementById('hand-menu-toggle');
+    if (!handMenuToggle) {
+        return;
+    }
+    
+    // Load saved preference from localStorage
+    const savedHandMenuMode = localStorage.getItem('handMenuMode');
+    if (savedHandMenuMode === 'true') {
+        appState.handMenuMode = true;
+        handMenuToggle.classList.add('active');
+    }
+    
+    // Add click event listener
+    handMenuToggle.addEventListener('click', toggleHandMenuMode);
+    
+    // Update state in sign recognition module
+    updateHandMenuMode();
+}
+
+/**
+ * Toggle hand menu mode
+ */
+function toggleHandMenuMode() {
+    appState.handMenuMode = !appState.handMenuMode;
+    
+    // Save preference to localStorage
+    localStorage.setItem('handMenuMode', appState.handMenuMode.toString());
+    
+    // Update UI
+    const handMenuToggle = document.getElementById('hand-menu-toggle');
+    if (handMenuToggle) {
+        if (appState.handMenuMode) {
+            handMenuToggle.classList.add('active');
+        } else {
+            handMenuToggle.classList.remove('active');
+        }
+    }
+    
+    // Update state in sign recognition module
+    updateHandMenuMode();
+    
+    // Hide hand menu overlay if mode is disabled
+    if (!appState.handMenuMode) {
+        hideHandMenuOverlay();
+        const prompt = document.getElementById('hand-menu-prompt');
+        if (prompt) {
+            prompt.classList.add('hidden');
+        }
+    } else {
+        // Ensure sign language is enabled for hand menu to work
+        if (!appState.features.sign.enabled) {
+            // Enable sign language feature automatically
+            toggleFeature('sign');
+        }
+    }
+    
+    console.log('Hand menu mode toggled:', appState.handMenuMode ? 'enabled' : 'disabled');
+}
+
+/**
+ * Update hand menu mode in sign recognition module
+ */
+function updateHandMenuMode() {
+    if (typeof setHandMenuMode === 'function') {
+        setHandMenuMode(appState.handMenuMode);
+    }
+    
+    // Show/hide prompt based on mode and hand detection
+    updateHandMenuPrompt();
+}
+
+/**
+ * Update hand menu prompt visibility
+ */
+function updateHandMenuPrompt() {
+    const prompt = document.getElementById('hand-menu-prompt');
+    if (!prompt) {
+        return;
+    }
+    
+    if (appState.handMenuMode && appState.features.sign.enabled) {
+        // Show prompt initially, will be hidden when hands are detected
+        // The sign recognition module will control this based on hand detection
+        prompt.classList.remove('hidden');
+    } else {
+        prompt.classList.add('hidden');
+    }
+}
+
+/**
+ * Hide hand menu overlay (called from main.js)
+ */
+function hideHandMenuOverlay() {
+    const handMenuOverlay = document.getElementById('hand-menu-overlay');
+    if (handMenuOverlay) {
+        handMenuOverlay.style.display = 'none';
+    }
+}
 
 /**
  * Cleanup camera stream on page unload
