@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AccessLens - Settings</title>
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+    <link rel="alternate icon" href="/icons/favicon.svg">
+    
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Pico.css - Dark Mode -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/styles/main.css">
+    <link rel="stylesheet" href="/styles/settings.css">
+    <link rel="stylesheet" href="/styles/theme.css">
+</head>
+<body class="settings-page">
+    <header class="settings-header">
+        <div class="header-content">
+            <a href="/dashboard.html" class="btn-back">
+                <i data-lucide="arrow-left" class="btn-icon-small"></i>
+                <span>Back to Dashboard</span>
+            </a>
+            <h1>Settings</h1>
+        </div>
+    </header>
+    
+    <main class="settings-main">
+        <div class="settings-content">
+            <!-- Accessibility Profile -->
+            <details class="settings-section" open>
+                <summary>
+                    <i data-lucide="user" class="section-icon"></i>
+                    <span>Accessibility Profile</span>
+                </summary>
+                <p class="section-description">Select your accessibility needs to customize your experience</p>
+                
+                <div class="form-group">
+                    <label for="accessibility-profile">I am:</label>
+                    <select id="accessibility-profile" class="form-select">
+                        <option value="none">No specific accessibility needs</option>
+                        <option value="blind">Blind</option>
+                        <option value="low-vision">Low Vision</option>
+                        <option value="deaf">Deaf</option>
+                        <option value="hard-of-hearing">Hard of Hearing</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+            </details>
+            
+            <!-- Feature Preferences -->
+            <details class="settings-section">
+                <summary>
+                    <i data-lucide="toggle-left" class="section-icon"></i>
+                    <span>Feature Preferences</span>
+                </summary>
+                <p class="section-description">Choose which features are enabled by default</p>
+                
+                <div class="feature-toggle-list">
+                    <div class="feature-toggle-item">
+                        <label>
+                            <input type="checkbox" id="feature-speech" checked>
+                            <span>Speech Captions</span>
+                        </label>
+                    </div>
+                    <div class="feature-toggle-item">
+                        <label>
+                            <input type="checkbox" id="feature-sign" checked>
+                            <span>Sign Language</span>
+                        </label>
+                    </div>
+                    <div class="feature-toggle-item">
+                        <label>
+                            <input type="checkbox" id="feature-scene" checked>
+                            <span>Scene Description</span>
+                        </label>
+                    </div>
+                    <div class="feature-toggle-item">
+                        <label>
+                            <input type="checkbox" id="feature-face" checked>
+                            <span>Face Recognition</span>
+                        </label>
+                    </div>
+                </div>
+            </details>
+            
+            <!-- UI Preferences -->
+            <details class="settings-section">
+                <summary>
+                    <i data-lucide="palette" class="section-icon"></i>
+                    <span>UI Preferences</span>
+                </summary>
+                
+                <div class="form-group">
+                    <label for="font-size">Text Size</label>
+                    <select id="font-size" class="form-select">
+                        <option value="small">Small</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="large">Large</option>
+                        <option value="x-large">Extra Large</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="high-contrast">
+                        <span>High Contrast Mode</span>
+                    </label>
+                </div>
+            </details>
+            
+            <!-- Manage Faces -->
+            <details class="settings-section" open>
+                <summary>
+                    <i data-lucide="users" class="section-icon"></i>
+                    <span>Manage Faces</span>
+                </summary>
+                <p class="section-description">View and manage registered people</p>
+                
+                <div id="faces-list" class="faces-list">
+                    <div id="faces-loading" class="loading-state">
+                        <p>Loading faces...</p>
+                    </div>
+                    <div id="faces-empty" class="empty-state" style="display: none;">
+                        <p>No registered faces yet. Use the AR Lens to register people!</p>
+                    </div>
+                    <!-- Faces will be inserted here -->
+                </div>
+            </details>
+            
+            <!-- Save Button -->
+            <div class="settings-actions">
+                <button id="save-settings-btn" class="btn-primary">
+                    <i data-lucide="save" class="btn-icon-small"></i>
+                    <span>Save Settings</span>
+                </button>
+                <div id="save-status" class="save-status" style="display: none;"></div>
+            </div>
+            
+            <!-- Danger Zone -->
+            <details class="settings-section danger-zone">
+                <summary>
+                    <i data-lucide="alert-triangle" class="section-icon"></i>
+                    <span>Danger Zone</span>
+                </summary>
+                <p class="section-description">Permanently delete your account and all associated data</p>
+                
+                <div class="danger-zone-content">
+                    <p><strong>Warning:</strong> This action cannot be undone. This will permanently delete:</p>
+                    <ul>
+                        <li>Your user profile and preferences</li>
+                        <li>All registered faces</li>
+                        <li>All memories and interactions</li>
+                        <li>Your Firebase Auth account</li>
+                    </ul>
+                    <button id="delete-account-btn" class="btn-danger">
+                        <i data-lucide="trash-2" class="btn-icon-small"></i>
+                        <span>Delete Account</span>
+                    </button>
+                </div>
+            </details>
+        </div>
+    </main>
+    
+    <script type="module" src="/js/settings.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+        
+        // Re-initialize icons when accordion sections are toggled
+        document.querySelectorAll('details.settings-section').forEach(details => {
+            details.addEventListener('toggle', () => {
+                // Small delay to ensure DOM is updated
+                setTimeout(() => {
+                    lucide.createIcons();
+                }, 10);
+            });
+        });
+    </script>
+</body>
+</html>
+

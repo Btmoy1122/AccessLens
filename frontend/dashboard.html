@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AccessLens - Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+    <link rel="alternate icon" href="/icons/favicon.svg">
+    
+    <!-- Inter Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Pico.css - Dark Mode -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="/styles/main.css">
+    <link rel="stylesheet" href="/styles/dashboard.css">
+    <link rel="stylesheet" href="/styles/theme.css">
+</head>
+<body class="dashboard-page">
+    <header class="dashboard-header">
+        <div class="header-content">
+            <h1>AccessLens</h1>
+            <div class="header-actions">
+                <span id="user-name" class="user-name">Loading...</span>
+                <button id="settings-btn" class="btn-icon" title="Settings">
+                    <i data-lucide="settings"></i>
+                </button>
+                <button id="logout-btn" class="btn-icon" title="Log Out">
+                    <i data-lucide="log-out"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+    
+    <main class="dashboard-main">
+        <div class="dashboard-content">
+            <!-- Primary Action -->
+            <section class="dashboard-section primary-action hero-card">
+                <div class="hero-content">
+                    <i data-lucide="camera" class="hero-icon"></i>
+                    <h2>Start AR Lens</h2>
+                    <p>Launch the camera view to use face recognition, scene description, and more</p>
+                    <a href="/index.html" class="btn-primary btn-large btn-hero">
+                        <i data-lucide="play" class="btn-icon"></i>
+                        <span>Start Lens</span>
+                    </a>
+                </div>
+            </section>
+            
+            <!-- Memory Log -->
+            <section class="dashboard-section memory-log">
+                <h2>Memory Log</h2>
+                <div id="memory-log-content">
+                    <div id="memory-loading" class="loading-state">
+                        <p>Loading memories...</p>
+                    </div>
+                    <div id="memory-empty" class="empty-state" style="display: none;">
+                        <p>No memories yet. Start using the AR Lens to save memories!</p>
+                    </div>
+                    <div id="memory-list" class="memory-list">
+                        <!-- Memories will be inserted here -->
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+    
+    <script type="module" src="/js/dashboard.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
+</body>
+</html>
+

@@ -15,7 +15,6 @@ serviceAccountKey.json
 firebase-service-account.json
 *.secret
 secrets/
-scripts/firebase-config.json
 
 # Firebase
 .firebase/
@@ -50,10 +49,27 @@ ml/models/*.pb
 *.h5
 *.tflite
 
+# Python
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 
 # Temporary files
 *.tmp
 .cache/
+
+# Prevent committing files with real API keys (use placeholders in docs)
+# Note: Documentation files with placeholders are safe to commit
 
 # Documentation - Plans and troubleshooting (not functional docs)
 docs/PINCH_CLICK_FIX_PLAN.md
@@ -63,4 +79,7 @@ docs/MEDIAPIPE_TROUBLESHOOTING.md
 docs/SCENE_DETECTION_IMPLEMENTATION_SUMMARY.md
 docs/SCENE_DETECTION_IMPLEMENTATION.md
 FRONTEND_SETUP_SUMMARY.md
+
+# Temporary explanation/fix documentation files (cleaned up)
+# These files have been removed from the repository
 

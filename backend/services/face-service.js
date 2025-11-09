@@ -36,22 +36,77 @@ const db = getFirestore(app);
  */
 export async function addFace(faceData) {
     try {
+        console.log('🔄 addFace called:', {
+            name: faceData.name,
+            userId: faceData.userId,
+            isSelf: faceData.isSelf,
+            hasEmbedding: !!faceData.embedding,
+            embeddingLength: faceData.embedding?.length
+        });
+        
+        // Validate input
+        if (!faceData.name) {
+            throw new Error('Face name is required');
+        }
+        if (!faceData.embedding) {
+            throw new Error('Face embedding is required');
+        }
+        if (!faceData.userId) {
+            console.warn('⚠️ No userId provided, using "default"');
+        }
+        
         // Convert Float32Array to regular array for Firestore storage
         const embeddingArray = Array.from(faceData.embedding);
+        console.log(`🔄 Converting embedding to array (length: ${embeddingArray.length})`);
         
-        const docRef = await addDoc(collection(db, 'faces'), {
+        const faceDoc = {
             name: faceData.name,
             notes: faceData.notes || '',
             embedding: embeddingArray,
             userId: faceData.userId || 'default',
+            isSelf: faceData.isSelf || false, // Flag to mark user's own face
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
+        };
+        
+        console.log('🔄 Adding face to Firestore:', {
+            name: faceDoc.name,
+            userId: faceDoc.userId,
+            isSelf: faceDoc.isSelf,
+            embeddingLength: faceDoc.embedding.length
         });
         
-        console.log('Face added successfully:', faceData.name, 'ID:', docRef.id);
+        const docRef = await addDoc(collection(db, 'faces'), faceDoc);
+        
+        console.log('✅ Face added successfully to Firestore:', {
+            name: faceData.name,
+            id: docRef.id,
+            isSelf: faceData.isSelf || false,
+            userId: faceData.userId || 'default'
+        });
+        
         return docRef.id;
     } catch (error) {
-        console.error('Error adding face:', error);
+        console.error('❌ Error adding face to Firestore:', error);
+        console.error('Error details:', {
+            message: error.message,
+            code: error.code,
+            stack: error.stack,
+            faceData: {
+                name: faceData.name,
+                userId: faceData.userId,
+                isSelf: faceData.isSelf,
+                hasEmbedding: !!faceData.embedding
+            }
+        });
+        
+        // Provide more helpful error messages
+        if (error.code === 'permission-denied') {
+            throw new Error('Permission denied. Please check Firestore security rules allow creating faces for your userId.');
+        } else if (error.code === 'unauthenticated') {
+            throw new Error('Authentication required. Please sign in again.');
+        }
+        
         throw error;
     }
 }
@@ -76,6 +131,7 @@ export async function getAllFaces() {
                 memorySummary: data.memorySummary || null, // Combined summary of all memories
                 embedding: new Float32Array(data.embedding),
                 userId: data.userId || 'default',
+                isSelf: data.isSelf || false, // Flag to mark user's own face
                 createdAt: data.createdAt,
                 updatedAt: data.updatedAt
             });
@@ -109,6 +165,7 @@ export async function getFacesByUser(userId) {
                 notes: data.notes || '',
                 embedding: new Float32Array(data.embedding),
                 userId: data.userId || 'default',
+                isSelf: data.isSelf || false, // Flag to mark user's own face
                 createdAt: data.createdAt,
                 updatedAt: data.updatedAt
             });
@@ -248,6 +305,64 @@ export async function getInteractionsByFace(faceId) {
  */
 export async function getInteractions(faceId) {
     return getInteractionsByFace(faceId);
+}
+
+/**
+ * Check if user has registered their own face
+ * 
+ * @param {string} userId - User ID to check
+ * @returns {Promise<boolean>} True if user has registered their own face
+ */
+export async function hasSelfFace(userId) {
+    try {
+        const q = query(
+            collection(db, 'faces'), 
+            where('userId', '==', userId),
+            where('isSelf', '==', true)
+        );
+        const querySnapshot = await getDocs(q);
+        return !querySnapshot.empty;
+    } catch (error) {
+        console.error('Error checking self face:', error);
+        return false;
+    }
+}
+
+/**
+ * Get user's own face (self face)
+ * 
+ * @param {string} userId - User ID
+ * @returns {Promise<Object|null>} User's self face or null if not found
+ */
+export async function getSelfFace(userId) {
+    try {
+        const q = query(
+            collection(db, 'faces'), 
+            where('userId', '==', userId),
+            where('isSelf', '==', true)
+        );
+        const querySnapshot = await getDocs(q);
+        
+        if (querySnapshot.empty) {
+            return null;
+        }
+        
+        const doc = querySnapshot.docs[0];
+        const data = doc.data();
+        return {
+            id: doc.id,
+            name: data.name,
+            notes: data.notes || '',
+            embedding: new Float32Array(data.embedding),
+            userId: data.userId,
+            isSelf: data.isSelf || false,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt
+        };
+    } catch (error) {
+        console.error('Error fetching self face:', error);
+        return null;
+    }
 }
 
 /**

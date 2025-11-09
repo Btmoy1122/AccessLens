@@ -49,6 +49,7 @@ import {
     stopRecognition,
     setVideoElement as setFaceVideoElement,
     registerFace,
+    setUserId as setFaceUserId,
     onFaceRecognized,
     onNewFace,
     onFaceUpdate,
@@ -68,6 +69,7 @@ import {
     cleanupInvisibleOverlays
 } from './face-overlays.js';
 import { addInteraction, getInteractions, getFaceMemorySummary } from '@backend/services/face-service.js';
+import { getCurrentUser, onAuthStateChange } from '@backend/services/auth-service.js';
 
 // Application State
 const appState = {
@@ -78,6 +80,8 @@ const appState = {
     availableCameras: [], // List of available camera devices
     selectedCameraId: null, // Currently selected camera device ID
     handMenuMode: false, // Hand menu mode state
+    currentUser: null, // Current authenticated user
+    userId: null, // Current user ID
     features: {
         speech: { enabled: false },
         sign: { enabled: true }, // Hand Detection always enabled by default
@@ -111,7 +115,72 @@ const SUMMARY_CACHE_TIMEOUT = 10000; // Refresh summary every 10 seconds
 /**
  * Initialize the application
  */
-document.addEventListener('DOMContentLoaded', () => {
+// Check authentication and initialize app
+let authChecked = false;
+let domReady = false;
+
+// Check if DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        domReady = true;
+        tryInitializeApp();
+    });
+} else {
+    domReady = true;
+    tryInitializeApp();
+}
+
+// Check authentication or guest mode
+onAuthStateChange((user) => {
+    // Check for guest mode first
+    const isGuestMode = sessionStorage.getItem('guestMode') === 'true';
+    const guestUserId = sessionStorage.getItem('guestUserId');
+    
+    if (!user && !isGuestMode) {
+        // Not logged in and not guest, redirect to login
+        window.location.href = '/login.html';
+        return;
+    }
+    
+    if (isGuestMode && guestUserId) {
+        // Guest mode - use guest user
+        appState.currentUser = {
+            uid: guestUserId,
+            email: null,
+            displayName: 'Guest',
+            isGuest: true
+        };
+        appState.userId = guestUserId;
+        console.log('Guest mode enabled:', guestUserId);
+        
+        // Set userId in face recognition module (guest faces won't be saved)
+        setFaceUserId(guestUserId);
+        
+        authChecked = true;
+        tryInitializeApp();
+    } else if (user) {
+        // User is logged in, set user info
+        appState.currentUser = user;
+        appState.userId = user.uid;
+        console.log('User authenticated:', user.uid);
+        
+        // Set userId in face recognition module
+        setFaceUserId(user.uid);
+        
+        authChecked = true;
+        tryInitializeApp();
+    }
+});
+
+function tryInitializeApp() {
+    // Only initialize if both auth is checked and DOM is ready
+    if (authChecked && domReady && !document.body.dataset.initialized) {
+        initializeApp();
+        document.body.dataset.initialized = 'true';
+    }
+}
+
+function initializeApp() {
     try {
         console.log('AccessLens initialized');
         
@@ -259,7 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
         console.error('Error initializing AccessLens:', error);
     }
-});
+}
 
 /**
  * Get and cache DOM elements
@@ -791,14 +860,6 @@ function initializeFeatureToggles() {
         toggleFace.addEventListener('click', () => toggleFeature('face'));
     }
     
-    // Settings Button
-    const settingsBtn = document.getElementById('settings-btn');
-    if (settingsBtn) {
-        settingsBtn.addEventListener('click', () => {
-            alert('Settings panel - Coming soon!');
-        });
-    }
-    
     // Help Button
     const helpBtn = document.getElementById('help-btn');
     if (helpBtn) {
@@ -1122,6 +1183,9 @@ function initializeFaceRecognition() {
     // Show loading status
     console.log('Initializing face recognition...');
     
+    // Check if this is self registration flow
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    
     // Initialize face recognition models
     initFaceRecognition().then(success => {
         if (success) {
@@ -1129,6 +1193,19 @@ function initializeFaceRecognition() {
             
             // Set up callbacks for face recognition events
             setupFaceRecognitionCallbacks();
+            
+            // If this is self registration, enable face recognition automatically
+            if (isSelfRegistration) {
+                // Enable face recognition feature
+                if (!appState.features.face.enabled) {
+                    toggleFeature('face');
+                }
+                // Show message to user
+                updateCaptions('👤 Please look at the camera to register your face...', false);
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 5000);
+            }
         } else {
             console.warn('Face recognition not available');
             // Update UI to show it's not available
@@ -1136,6 +1213,11 @@ function initializeFaceRecognition() {
             if (faceToggle) {
                 faceToggle.disabled = true;
                 faceToggle.title = 'Face recognition not supported in this browser. Models may have failed to load.';
+            }
+            
+            // If self registration and face recognition failed, show error
+            if (isSelfRegistration) {
+                updateCaptions('❌ Face recognition failed to load. Please refresh the page.', true);
             }
         }
     }).catch(error => {
@@ -1147,10 +1229,14 @@ function initializeFaceRecognition() {
         }
         
         // Show error in UI
-        updateCaptions('❌ Face recognition failed to initialize. Check console for details.', true);
-        setTimeout(() => {
-            updateCaptions('', false);
-        }, 5000);
+        if (isSelfRegistration) {
+            updateCaptions('❌ Face recognition failed to load. Please refresh the page.', true);
+        } else {
+            updateCaptions('❌ Face recognition failed to initialize. Check console for details.', true);
+            setTimeout(() => {
+                updateCaptions('', false);
+            }, 5000);
+        }
     });
 }
 
@@ -1177,18 +1263,28 @@ function setupFaceRecognitionCallbacks() {
     onNewFace((detection, faceKey) => {
         console.log('New face detected - ready for registration', { faceKey });
         
+        // Check if this is self registration
+        const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+        
         // Store the detection for registration
         currentPendingDetection = { detection, faceKey };
         
         // Show unknown face overlay
         const video = document.getElementById('camera-video');
         if (video && detection) {
-            updateFaceOverlay(faceKey, { name: 'Unknown', notes: 'Tap to register' }, detection, video);
+            if (isSelfRegistration) {
+                updateFaceOverlay(faceKey, { name: 'You', notes: 'Register your face' }, detection, video);
+            } else {
+                updateFaceOverlay(faceKey, { name: 'Unknown', notes: 'Tap to register' }, detection, video);
+            }
         }
         
         // Show modal after a short delay (so user can see the face)
         setTimeout(() => {
             showFaceRegistrationModal();
+            if (isSelfRegistration) {
+                updateCaptions('👤 Face detected! Please register your face below.', false);
+            }
         }, 1000);
     });
     
@@ -1310,12 +1406,32 @@ function initializeFaceRegistrationModal() {
     // Close modal handlers
     if (faceModalClose) {
         faceModalClose.addEventListener('click', () => {
+            // Check if this is self registration - don't allow closing
+            const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+            if (isSelfRegistration) {
+                // Show message that self registration is required
+                updateCaptions('⚠️ Please register your face to continue using AccessLens.', true);
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 3000);
+                return;
+            }
             hideFaceRegistrationModal();
         });
     }
     
     if (faceSkipBtn) {
         faceSkipBtn.addEventListener('click', () => {
+            // Check if this is self registration - don't allow skipping
+            const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+            if (isSelfRegistration) {
+                // Show message that self registration is required
+                updateCaptions('⚠️ Please register your face to continue using AccessLens.', true);
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 3000);
+                return;
+            }
             hideFaceRegistrationModal();
         });
     }
@@ -1336,10 +1452,15 @@ function initializeFaceRegistrationModal() {
         });
     }
     
-    // Close modal when clicking outside
+    // Close modal when clicking outside (but not for self registration)
     if (faceRegistrationModal) {
         faceRegistrationModal.addEventListener('click', (e) => {
             if (e.target === faceRegistrationModal) {
+                const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+                if (isSelfRegistration) {
+                    // Don't allow closing self registration modal by clicking outside
+                    return;
+                }
                 hideFaceRegistrationModal();
             }
         });
@@ -1453,13 +1574,21 @@ async function stopMemoryRecording() {
         selectedFaceForMemory = primaryFace;
     }
     
-    // Save to Firebase
+    // Save to Firebase (skip if guest mode)
+    if (appState.currentUser?.isGuest) {
+        updateCaptions('👤 Guest mode: Memory not saved. Sign in to save memories.', false);
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 3000);
+        return;
+    }
+    
     try {
         updateCaptions('💾 Saving memory...', false);
         const interactionId = await addInteraction({
             faceId: selectedFaceForMemory.faceId,
             rawTranscript: transcript, // Raw transcript - Cloud Function will generate summary
-            userId: 'default' // TODO: Get from app state or auth
+            userId: appState.userId || 'default'
         });
         
         console.log('Memory saved successfully:', interactionId);
@@ -1806,16 +1935,85 @@ function hideMemoriesModal() {
  * Show face registration modal
  */
 function showFaceRegistrationModal() {
-    if (!faceRegistrationModal || !currentPendingDetection) {
+    console.log('🔄 showFaceRegistrationModal called:', {
+        hasModal: !!faceRegistrationModal,
+        hasPendingDetection: !!currentPendingDetection,
+        modalDisplay: faceRegistrationModal?.style.display
+    });
+    
+    if (!faceRegistrationModal) {
+        console.error('❌ Cannot show modal: faceRegistrationModal not found');
         return;
     }
     
+    if (!currentPendingDetection) {
+        console.error('❌ Cannot show modal: No pending detection');
+        updateCaptions('❌ Error: No face detected. Please look at the camera.', true);
+        return;
+    }
+    
+    // Check if this is self registration
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    
     // Reset form
     if (faceNameInput) {
-        faceNameInput.value = '';
+        if (isSelfRegistration && appState.currentUser) {
+            // Pre-fill with user's display name or "Me"
+            faceNameInput.value = appState.currentUser.displayName || 'Me';
+        } else {
+            faceNameInput.value = '';
+        }
     }
     if (faceNotesInput) {
-        faceNotesInput.value = '';
+        if (isSelfRegistration) {
+            faceNotesInput.value = 'This is me - the user of AccessLens';
+            faceNotesInput.style.display = 'none'; // Hide notes for self registration
+            // Hide the label too
+            const notesLabel = faceRegistrationModal.querySelector('label[for="face-notes"]');
+            if (notesLabel) {
+                notesLabel.style.display = 'none';
+            }
+        } else {
+            faceNotesInput.value = '';
+            faceNotesInput.style.display = ''; // Show notes for other registrations
+            const notesLabel = faceRegistrationModal.querySelector('label[for="face-notes"]');
+            if (notesLabel) {
+                notesLabel.style.display = '';
+            }
+        }
+    }
+    
+    // Update modal title and description for self registration
+    const modalTitle = faceRegistrationModal.querySelector('.modal-header h3');
+    const modalDescription = faceRegistrationModal.querySelector('.modal-description');
+    if (isSelfRegistration) {
+        if (modalTitle) {
+            modalTitle.textContent = 'Register Your Face';
+        }
+        if (modalDescription) {
+            modalDescription.textContent = 'Please register your face so AccessLens can recognize you. Look at the camera and click "Register".';
+        }
+        // Hide skip button and close button for self registration
+        if (faceSkipBtn) {
+            faceSkipBtn.style.display = 'none';
+        }
+        if (faceModalClose) {
+            faceModalClose.style.display = 'none';
+        }
+    } else {
+        if (modalTitle) {
+            modalTitle.textContent = 'Register New Face';
+        }
+        if (modalDescription) {
+            modalDescription.textContent = 'Enter a name and optional notes for this person.';
+        }
+        // Show skip button and close button for regular registration
+        if (faceSkipBtn) {
+            faceSkipBtn.style.display = '';
+        }
+        if (faceModalClose) {
+            faceModalClose.style.display = '';
+        }
     }
     
     // Show modal
@@ -1828,6 +2026,10 @@ function showFaceRegistrationModal() {
     if (faceNameInput) {
         setTimeout(() => {
             faceNameInput.focus();
+            // Select all text if it's pre-filled
+            if (isSelfRegistration) {
+                faceNameInput.select();
+            }
         }, 100);
     }
 }
@@ -1837,6 +2039,13 @@ function showFaceRegistrationModal() {
  */
 function hideFaceRegistrationModal() {
     if (!faceRegistrationModal) {
+        return;
+    }
+    
+    // Check if this is self registration - don't allow closing
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    if (isSelfRegistration) {
+        // Don't allow closing self registration modal
         return;
     }
     
@@ -1880,12 +2089,30 @@ function handleFaceRegistration() {
         faceRegisterBtn.textContent = 'Saving...';
     }
     
+    // Register the face (skip if guest mode)
+    if (appState.currentUser?.isGuest) {
+        updateCaptions('👤 Guest mode: Face not saved. Sign in to save faces.', false);
+        hideFaceRegistrationModal();
+        setTimeout(() => {
+            updateCaptions('', false);
+        }, 3000);
+        return;
+    }
+    
+    // Check if this is self registration
+    const isSelfRegistration = sessionStorage.getItem('registerSelfFace') === 'true';
+    
     // Register the face
     updateCaptions('💾 Saving face...', false);
-    registerFace(name, notes, currentPendingDetection.detection)
+    registerFace(name, notes, currentPendingDetection.detection, appState.userId, isSelfRegistration)
         .then(async (faceId) => {
-            console.log(`Face registered successfully: ${name} (ID: ${faceId})`);
-            updateCaptions(`✅ Face registered: ${name}`, false);
+            console.log(`Face registered successfully: ${name} (ID: ${faceId}, isSelf: ${isSelfRegistration})`);
+            
+            if (isSelfRegistration) {
+                updateCaptions(`✅ Your face has been registered! Welcome to AccessLens.`, false);
+            } else {
+                updateCaptions(`✅ Face registered: ${name}`, false);
+            }
             
             // Reload known faces from Firebase
             await reloadKnownFaces();
@@ -1893,10 +2120,18 @@ function handleFaceRegistration() {
             // Hide modal
             hideFaceRegistrationModal();
             
-            // Clear message after 2 seconds
-            setTimeout(() => {
-                updateCaptions('', false);
-            }, 2000);
+            // If this was self registration, redirect to dashboard after a short delay
+            if (isSelfRegistration) {
+                sessionStorage.removeItem('registerSelfFace');
+                setTimeout(() => {
+                    window.location.href = '/dashboard.html';
+                }, 2000);
+            } else {
+                // Clear message after 2 seconds
+                setTimeout(() => {
+                    updateCaptions('', false);
+                }, 2000);
+            }
         })
         .catch(error => {
             console.error('Error registering face:', error);
@@ -2705,10 +2940,6 @@ export const elementClickRegistry = {
     'toggle-pinch-click': () => {
         console.log('Pinch click: Toggling pinch-to-click');
         togglePinchToClick();
-    },
-    'settings-btn': () => {
-        console.log('Pinch click: Opening settings');
-        alert('Settings panel - Coming soon!');
     },
     'help-btn': () => {
         console.log('Pinch click: Opening help');
