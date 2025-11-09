@@ -30,6 +30,9 @@
         <!-- A-Frame scene will be added here when needed -->
     </div>
 
+    <!-- Pinch-to-Click Visual Overlay Canvas -->
+    <canvas id="pinch-overlay" class="pinch-overlay"></canvas>
+
     <!-- Sidebar Toggle Button -->
     <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar">
         <span class="toggle-icon">☰</span>
@@ -71,6 +74,22 @@
 
             <div class="nav-section">
                 <h3>Settings</h3>
+                <div class="nav-item camera-selector-container">
+                    <label for="camera-select" class="nav-label" style="margin-bottom: 8px; display: block;">Camera</label>
+                    <select id="camera-select" class="camera-select">
+                        <option value="">Loading cameras...</option>
+                    </select>
+                </div>
+                <button class="nav-item" id="toggle-flip-camera">
+                    <span class="nav-icon">🪞</span>
+                    <span class="nav-label">Mirror Camera</span>
+                    <span class="nav-status" id="status-flip-camera">Off</span>
+                </button>
+                <button class="nav-item" id="toggle-pinch-click">
+                    <span class="nav-icon">👆</span>
+                    <span class="nav-label">Pinch to Click</span>
+                    <span class="nav-status" id="status-pinch-click">Off</span>
+                </button>
                 <button class="nav-item" id="settings-btn">
                     <span class="nav-icon">⚙️</span>
                     <span class="nav-label">Settings</span>
@@ -95,6 +114,16 @@
     <!-- Speech Captions Overlay -->
     <div id="captions-container" class="captions-container">
         <div id="captions-text" class="captions-text"></div>
+    </div>
+
+    <!-- Pinch Detection Status -->
+    <div id="pinch-status" class="pinch-status hidden">
+        <div id="pinch-text" class="pinch-text not-pinched">not pinched</div>
+    </div>
+    
+    <!-- Pinch Type Indicator -->
+    <div id="pinch-type-indicator" class="pinch-type-indicator hidden">
+        <div id="pinch-type-text" class="pinch-type-text"></div>
     </div>
     
     <!-- Face Overlays Container -->

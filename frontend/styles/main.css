@@ -39,6 +39,38 @@ html {
     display: block;
     min-width: 100%;
     min-height: 100%;
+    transition: transform 0.3s ease;
+}
+
+/* Flipped/Mirrored Camera Video */
+.camera-video.flipped {
+    transform: scaleX(-1);
+}
+
+/* Pinch Overlay Canvas - For visual feedback */
+.pinch-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    z-index: 100;
+    background: transparent;
+    /* Ensure canvas is above video but below UI elements */
+}
+
+/* Snap Grid Overlay - Visual grid for button slots */
+.snap-grid-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5; /* Above nav-section but below dragging buttons */
+    opacity: 0.6;
+    display: none; /* Hidden by default, shown when dragging */
 }
 
 /* AR Container - Overlay on camera */
@@ -89,14 +121,14 @@ html {
     position: fixed;
     top: 20px;
     right: 20px;
-    width: 50px;
-    height: 50px;
+    width: 150px; /* 300% of 50px */
+    height: 150px; /* 300% of 50px */
     background: rgba(255, 255, 255, 0.15);
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 12px;
     color: #fff;
-    font-size: 24px;
+    font-size: 60px; /* Increased proportionally for icon (300% of 20px) */
     cursor: pointer;
     z-index: 1000;
     display: flex;
@@ -119,21 +151,21 @@ html {
     line-height: 1;
 }
 
-/* Sidebar */
+/* Sidebar - Highly transparent */
 .sidebar {
     position: fixed;
     top: 0;
-    right: -350px; /* Hidden by default */
-    width: 350px;
+    right: -525px; /* Hidden by default - 50% wider (350px * 1.5 = 525px) */
+    width: 525px; /* 50% wider than original 350px */
     height: 100vh;
-    background: rgba(20, 20, 20, 0.95);
-    backdrop-filter: blur(20px);
-    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(20, 20, 20, 0.4); /* Light, see-through */
+    backdrop-filter: blur(2px); /* Subtle blur for readability */
+    border-left: 1px solid rgba(255, 255, 255, 0.2);
     z-index: 2000;
     transition: right 0.3s ease;
     display: flex;
     flex-direction: column;
-    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
     overflow-y: auto;
     overflow-x: hidden;
 }
@@ -154,8 +186,9 @@ html {
 .sidebar-header h2 {
     font-size: 24px;
     font-weight: 600;
-    color: #fff;
+    color: rgba(255, 255, 255, 0.9);
     margin: 0;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .sidebar-close {
@@ -182,50 +215,65 @@ html {
 .sidebar-nav {
     flex: 1;
     padding: 20px 0;
+    position: relative; /* Allow absolute positioning of child buttons */
 }
 
 .nav-section {
     margin-bottom: 30px;
     padding: 0 20px;
+    position: static; /* Don't create positioning context - let buttons position relative to sidebar-nav */
 }
 
 .nav-section h3 {
     font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.8);
     margin-bottom: 12px;
     font-weight: 600;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 .nav-item {
     width: 100%;
-    background: transparent;
-    border: none;
-    color: #fff;
+    background: rgba(255, 255, 255, 0.75); /* High-contrast buttons */
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #222;
     padding: 16px;
     margin-bottom: 8px;
     border-radius: 12px;
-    cursor: pointer;
+    cursor: grab;
     display: flex;
     align-items: center;
     gap: 12px;
     transition: all 0.2s ease;
     text-align: left;
     font-size: 16px;
+    position: relative; /* Allow absolute positioning for drag */
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .nav-item:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
 .nav-item:active {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.85);
 }
 
 .nav-item.active {
-    background: rgba(74, 144, 226, 0.2);
-    border: 1px solid rgba(74, 144, 226, 0.3);
+    background: rgba(74, 144, 226, 0.85);
+    border: 1px solid rgba(74, 144, 226, 0.5);
+    color: #fff;
+}
+
+.nav-item.dragging {
+    box-shadow: 0 0 12px 4px #1ba0e2;
+    z-index: 3000;
+    cursor: grabbing;
+    opacity: 0.95;
+    transform: scale(1.05);
 }
 
 .nav-icon {
@@ -241,36 +289,73 @@ html {
 
 .nav-status {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(0, 0, 0, 0.7);
     padding: 4px 8px;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(0, 0, 0, 0.1);
     border-radius: 6px;
     font-weight: 600;
 }
 
 .nav-item.active .nav-status {
-    background: rgba(74, 144, 226, 0.3);
-    color: #4a90e2;
+    background: rgba(255, 255, 255, 0.3);
+    color: #fff;
 }
 
-/* Sidebar Overlay (Mobile) */
+/* Camera Selector */
+.camera-selector-container {
+    padding: 16px;
+    cursor: default; /* Don't show grab cursor */
+}
+
+.camera-selector-container .nav-label {
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
+    margin-bottom: 8px;
+    display: block;
+}
+
+.camera-select {
+    width: 100%;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    color: #222;
+    font-size: 14px;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.camera-select:hover {
+    background: rgba(255, 255, 255, 1);
+    border-color: rgba(74, 144, 226, 0.5);
+}
+
+.camera-select:focus {
+    border-color: rgba(74, 144, 226, 0.8);
+    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
+/* Sidebar Overlay (Mobile) - Disabled dimming */
 .sidebar-overlay {
     position: fixed;
     top: 0;
     left: 0;
     width: 100vw;
     height: 100vh;
-    background: rgba(0, 0, 0, 0.5);
+    background: transparent; /* No dimming */
     z-index: 1500;
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease;
-    backdrop-filter: blur(2px);
+    pointer-events: none; /* Allow clicks through when visible */
 }
 
 .sidebar-overlay.active {
-    opacity: 1;
+    opacity: 0; /* Keep transparent even when active */
     visibility: visible;
+    pointer-events: auto; /* Only for click-through to close sidebar */
 }
 
 /* Camera Status Indicator */
@@ -327,9 +412,9 @@ html {
     .sidebar-toggle {
         top: 15px;
         right: 15px;
-        width: 45px;
-        height: 45px;
-        font-size: 20px;
+        width: 135px; /* 300% of 45px */
+        height: 135px; /* 300% of 45px */
+        font-size: 54px; /* Increased proportionally for icon */
     }
 
     .camera-status {
@@ -412,6 +497,90 @@ html {
     border-color: rgba(255, 107, 107, 0.3);
 }
 
+/* Pinch Detection Status */
+.pinch-status {
+    position: fixed;
+    bottom: 120px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Pinch Type Indicator */
+.pinch-type-indicator {
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2500;
+    pointer-events: none;
+    user-select: none;
+    transition: opacity 0.3s ease;
+}
+
+.pinch-type-indicator.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.pinch-type-text {
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 200px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.pinch-type-text.index-pinch {
+    border-color: #4a90e2;
+    background: rgba(74, 144, 226, 0.9);
+}
+
+.pinch-type-text.middle-pinch {
+    border-color: #e2a04a;
+    background: rgba(226, 160, 74, 0.9);
+}
+
+.pinch-text {
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(10px);
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 150px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.pinch-text.pinched {
+    background: rgba(76, 175, 80, 0.85);
+    border-color: rgba(76, 175, 80, 0.5);
+    color: #fff;
+}
+
+.pinch-text.not-pinched {
+    background: rgba(0, 0, 0, 0.75);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+}
+
+/* Hide pinch status when sign language is off */
+.pinch-status.hidden {
+    display: none;
+}
+
 /* Responsive captions */
 @media (max-width: 768px) {
     .captions-container {
@@ -423,6 +592,16 @@ html {
     .captions-text {
         font-size: 16px;
         padding: 12px 20px;
+    }
+
+    .pinch-status {
+        bottom: 100px;
+    }
+
+    .pinch-text {
+        font-size: 16px;
+        padding: 10px 20px;
+        min-width: 120px;
     }
 }
 

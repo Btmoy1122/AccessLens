@@ -37,7 +37,17 @@ ml/models/*.pb
 *.h5
 *.tflite
 
+
 # Temporary files
 *.tmp
 .cache/
+
+# Documentation - Plans and troubleshooting (not functional docs)
+docs/PINCH_CLICK_FIX_PLAN.md
+docs/MEDIAPIPE_ASSERTION_FIXES.md
+docs/MEDIAPIPE_CDN_ISSUES.md
+docs/MEDIAPIPE_TROUBLESHOOTING.md
+docs/SCENE_DETECTION_IMPLEMENTATION_SUMMARY.md
+docs/SCENE_DETECTION_IMPLEMENTATION.md
+FRONTEND_SETUP_SUMMARY.md
 
