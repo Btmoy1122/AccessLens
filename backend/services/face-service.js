@@ -15,6 +15,7 @@ import {
     updateDoc, 
     deleteDoc, 
     doc,
+    getDoc,
     serverTimestamp 
 } from 'firebase/firestore';
 import firebaseConfig from '../config/firebase-config.js';
@@ -72,6 +73,7 @@ export async function getAllFaces() {
                 id: doc.id,
                 name: data.name,
                 notes: data.notes || '',
+                memorySummary: data.memorySummary || null, // Combined summary of all memories
                 embedding: new Float32Array(data.embedding),
                 userId: data.userId || 'default',
                 createdAt: data.createdAt,
@@ -161,5 +163,125 @@ export async function deleteFace(faceId) {
         console.error('Error deleting face:', error);
         throw error;
     }
+}
+
+/**
+ * Add a conversation interaction/memory for a face
+ * 
+ * @param {Object} interactionData - Interaction data object
+ * @param {string} interactionData.faceId - Face ID of the person
+ * @param {string} interactionData.rawTranscript - Raw conversation transcript (from speech-to-text)
+ * @param {string} [interactionData.userId] - Optional user ID for multi-user support
+ * @returns {Promise<string>} Document ID of the added interaction
+ */
+export async function addInteraction(interactionData) {
+    try {
+        const docRef = await addDoc(collection(db, 'interactions'), {
+            faceId: interactionData.faceId,
+            rawTranscript: interactionData.rawTranscript || '',
+            userId: interactionData.userId || 'default',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            // Summary will be generated automatically by Cloud Function
+            summary: null,
+            summarized: false
+        });
+        
+        console.log('Interaction added successfully for face:', interactionData.faceId, 'ID:', docRef.id);
+        return docRef.id;
+    } catch (error) {
+        console.error('Error adding interaction:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get interactions for a specific face
+ * 
+ * @param {string} faceId - Face ID to get interactions for
+ * @returns {Promise<Array>} Array of interaction objects
+ */
+export async function getInteractionsByFace(faceId) {
+    try {
+        const q = query(collection(db, 'interactions'), where('faceId', '==', faceId));
+        const querySnapshot = await getDocs(q);
+        const interactions = [];
+        
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            // Support both 'rawTranscript' (new) and 'transcript' (legacy) for backward compatibility
+            const rawTranscript = data.rawTranscript || data.transcript || '';
+            interactions.push({
+                id: doc.id,
+                faceId: data.faceId,
+                rawTranscript: rawTranscript,
+                transcript: rawTranscript, // Alias for backward compatibility
+                userId: data.userId || 'default',
+                createdAt: data.createdAt,
+                updatedAt: data.updatedAt,
+                summarized: data.summarized || false,
+                summary: data.summary || null,
+                summarizedAt: data.summarizedAt || null
+            });
+        });
+        
+        // Sort by creation date (newest first)
+        interactions.sort((a, b) => {
+            if (!a.createdAt || !b.createdAt) return 0;
+            return b.createdAt.toMillis() - a.createdAt.toMillis();
+        });
+        
+        console.log(`Fetched ${interactions.length} interactions for face:`, faceId);
+        return interactions;
+    } catch (error) {
+        console.error('Error fetching interactions:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get interactions for a specific face (alias for getInteractionsByFace)
+ * Provided for consistency with naming conventions
+ * 
+ * @param {string} faceId - Face ID to get interactions for
+ * @returns {Promise<Array>} Array of interaction objects
+ */
+export async function getInteractions(faceId) {
+    return getInteractionsByFace(faceId);
+}
+
+/**
+ * Get the memory summary for a specific face from the faces collection
+ * This is the combined summary of all memories for this person
+ * 
+ * @param {string} faceId - Face ID to get memory summary for
+ * @returns {Promise<string|null>} Memory summary text or null if no summary exists
+ */
+export async function getFaceMemorySummary(faceId) {
+    try {
+        const faceDoc = await getDoc(doc(db, 'faces', faceId));
+        if (!faceDoc.exists()) {
+            return null;
+        }
+        
+        const faceData = faceDoc.data();
+        return faceData.memorySummary || null;
+    } catch (error) {
+        console.error('Error fetching face memory summary:', error);
+        return null;
+    }
+}
+
+/**
+ * Get the latest interaction summary for a specific face
+ * Returns the most recent summarized interaction's summary text
+ * 
+ * @deprecated Use getFaceMemorySummary instead - it returns the combined summary
+ * @param {string} faceId - Face ID to get latest summary for
+ * @returns {Promise<string|null>} Latest summary text or null if no summary exists
+ */
+export async function getLatestInteractionSummary(faceId) {
+    // Use the memory summary from faces collection instead
+    return getFaceMemorySummary(faceId);
 }
 

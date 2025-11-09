@@ -73,6 +73,20 @@
             </div>
 
             <div class="nav-section">
+                <h3>Memory</h3>
+                <button class="nav-item" id="add-memory-btn">
+                    <span class="nav-icon">💾</span>
+                    <span class="nav-label">Add Memory</span>
+                    <span class="nav-status" id="status-memory">Ready</span>
+                </button>
+                <button class="nav-item" id="view-memories-btn" style="display: none;">
+                    <span class="nav-icon">📖</span>
+                    <span class="nav-label">View Memories</span>
+                    <span class="nav-status" id="status-view-memories"></span>
+                </button>
+            </div>
+
+            <div class="nav-section">
                 <h3>Settings</h3>
                 <div class="nav-item camera-selector-container">
                     <label for="camera-select" class="nav-label" style="margin-bottom: 8px; display: block;">Camera</label>
@@ -149,6 +163,46 @@
                 <div class="modal-actions">
                     <button id="face-register-btn" class="btn-primary">Register Face</button>
                     <button id="face-skip-btn" class="btn-secondary">Skip</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Memories Modal -->
+    <div id="memories-modal" class="face-registration-modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px; max-height: 80vh;">
+            <div class="modal-header">
+                <h3 id="memories-modal-title">Memories</h3>
+                <button class="modal-close" id="memories-modal-close">×</button>
+            </div>
+            <div class="modal-body" style="overflow-y: auto; max-height: 60vh;">
+                <div id="memories-loading" class="memories-loading" style="display: none;">
+                    <p>Loading memories...</p>
+                </div>
+                <div id="memories-empty" class="memories-empty" style="display: none;">
+                    <p>No memories found for this person.</p>
+                </div>
+                <div id="memories-list" class="memories-list">
+                    <!-- Memories will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Face Selection Modal for Memory Recording -->
+    <div id="face-selection-modal" class="face-registration-modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Select Person for Memory</h3>
+                <button class="modal-close" id="face-selection-modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">Multiple people detected. Select who you want to record a memory for:</p>
+                <div id="face-selection-list" class="face-selection-list">
+                    <!-- Face options will be inserted here -->
+                </div>
+                <div class="modal-actions" style="margin-top: 20px;">
+                    <button id="face-selection-cancel-btn" class="btn-secondary">Cancel</button>
                 </div>
             </div>
         </div>

@@ -3,11 +3,13 @@
  * 
  * Provides audio narration of scenes and objects for visually impaired users.
  * Uses TensorFlow.js COCO-SSD for object detection and Web Speech Synthesis API for narration.
+ * Integrates with face recognition to identify recognized people by name.
  * 
  * Features:
  * - Real-time object detection using COCO-SSD model
  * - Natural language description generation
  * - Audio narration using browser's speech synthesis
+ * - Integration with face recognition to identify recognized people by name
  * - Configurable detection interval and confidence threshold
  * 
  * @module ml/vision/scene-description
@@ -15,6 +17,7 @@
 
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
 import '@tensorflow/tfjs';
+import { getAllActiveFaces } from './face-recognition.js';
 
 // Configuration constants
 const DETECTION_INTERVAL_MS = 4000; // Run detection every 4 seconds
@@ -173,17 +176,98 @@ async function detectLoop() {
 }
 
 /**
+ * Check if two bounding boxes overlap or are close to each other.
+ * Used to match person detections with recognized faces.
+ * 
+ * @param {Object} box1 - First bounding box {x, y, width, height} or [x, y, width, height]
+ * @param {Object} box2 - Second bounding box {x, y, width, height}
+ * @param {number} threshold - Maximum distance between centers to consider a match (in pixels)
+ * @returns {boolean} True if boxes overlap or are close
+ */
+function boxesOverlap(box1, box2, threshold = 100) {
+    // Handle both array format [x, y, width, height] and object format {x, y, width, height}
+    const x1 = Array.isArray(box1) ? box1[0] : box1.x;
+    const y1 = Array.isArray(box1) ? box1[1] : box1.y;
+    const w1 = Array.isArray(box1) ? box1[2] : box1.width;
+    const h1 = Array.isArray(box1) ? box1[3] : box1.height;
+    
+    // Calculate center points
+    const centerX1 = x1 + w1 / 2;
+    const centerY1 = y1 + h1 / 2;
+    const centerX2 = box2.x + box2.width / 2;
+    const centerY2 = box2.y + box2.height / 2;
+    
+    // Calculate distance between centers
+    const distance = Math.sqrt(
+        Math.pow(centerX1 - centerX2, 2) + 
+        Math.pow(centerY1 - centerY2, 2)
+    );
+    
+    // Check if distance is within threshold
+    return distance < threshold;
+}
+
+/**
+ * Find recognized face that matches a person detection by position.
+ * 
+ * @param {Object} personDetection - Person detection from COCO-SSD with bbox
+ * @param {Array} recognizedFaces - Array of recognized faces from face recognition
+ * @returns {Object|null} Matched face data or null if no match
+ */
+function findMatchingFace(personDetection, recognizedFaces) {
+    if (!recognizedFaces || recognizedFaces.length === 0) {
+        return null;
+    }
+    
+    // Get person bounding box (COCO-SSD uses bbox format [x, y, width, height])
+    const personBox = personDetection.bbox;
+    if (!personBox) {
+        return null;
+    }
+    
+    // Check each recognized face for overlap
+    for (const face of recognizedFaces) {
+        // Only match recognized faces (not unknown)
+        if (!face.isRecognized || !face.faceData || !face.faceData.name) {
+            continue;
+        }
+        
+        // Get face bounding box
+        if (face.detection && face.detection.detection && face.detection.detection.box) {
+            const faceBox = face.detection.detection.box;
+            
+            // Check if boxes overlap
+            if (boxesOverlap(personBox, faceBox, 150)) {
+                return face.faceData;
+            }
+        }
+    }
+    
+    return null;
+}
+
+/**
  * Generate natural language description from object detections.
  * Filters predictions by confidence score and formats them into readable text.
+ * Integrates with face recognition to identify recognized people.
  * 
  * @param {Array} predictions - Array of detection objects from COCO-SSD
  * @param {string} predictions[].class - Object class name (e.g., "person", "laptop")
  * @param {number} predictions[].score - Confidence score (0-1)
+ * @param {Array} predictions[].bbox - Bounding box [x, y, width, height]
  * @returns {string|null} Natural language description or null if no valid objects
  */
 function generateDescription(predictions) {
     if (!predictions || predictions.length === 0) {
         return null;
+    }
+    
+    // Get currently recognized faces for matching
+    let recognizedFaces = [];
+    try {
+        recognizedFaces = getAllActiveFaces();
+    } catch (error) {
+        console.warn('Could not get recognized faces for scene description:', error);
     }
     
     // Filter predictions by confidence score and sort by score (highest first)
@@ -196,18 +280,67 @@ function generateDescription(predictions) {
         return null;
     }
     
-    // Get unique object names (remove duplicates)
-    const objectNames = [...new Set(validPredictions.map(p => p.class))];
+    // Process each prediction and replace "person" with names if recognized
+    const processedObjects = validPredictions.map(prediction => {
+        // If it's a person, try to match with recognized faces
+        if (prediction.class === 'person' && prediction.bbox) {
+            const matchingFace = findMatchingFace(prediction, recognizedFaces);
+            if (matchingFace && matchingFace.name) {
+                // Use person's name instead of "person"
+                return matchingFace.name;
+            }
+            // If no match found, use "unknown person" instead of "person"
+            return 'unknown person';
+        }
+        // For non-person objects, use the class name
+        return prediction.class;
+    });
+    
+    // Get unique object names (remove duplicates while preserving order)
+    const seen = new Set();
+    const uniqueObjects = [];
+    for (const obj of processedObjects) {
+        if (!seen.has(obj)) {
+            seen.add(obj);
+            uniqueObjects.push(obj);
+        }
+    }
+    
+    // Helper function to check if an object is a recognized person (name)
+    const isName = (obj) => {
+        // Names are typically capitalized single words that aren't common object names
+        // Also exclude "unknown person" which should be treated as an object
+        return obj !== 'person' && 
+               obj !== 'unknown person' &&
+               obj[0] === obj[0].toUpperCase() && 
+               !obj.includes(' ') &&
+               !['Laptop', 'Phone', 'Book', 'Cup', 'Bottle', 'Chair', 'Table'].includes(obj);
+    };
     
     // Generate natural language description
-    if (objectNames.length === 1) {
-        return `I see a ${objectNames[0]}`;
-    } else if (objectNames.length === 2) {
-        return `I see a ${objectNames[0]} and a ${objectNames[1]}`;
+    if (uniqueObjects.length === 1) {
+        const obj = uniqueObjects[0];
+        if (isName(obj)) {
+            return `I see ${obj}`;
+        }
+        return `I see a ${obj}`;
+    } else if (uniqueObjects.length === 2) {
+        const obj1 = uniqueObjects[0];
+        const obj2 = uniqueObjects[1];
+        const prefix1 = isName(obj1) ? '' : 'a ';
+        const prefix2 = isName(obj2) ? '' : 'a ';
+        return `I see ${prefix1}${obj1} and ${prefix2}${obj2}`;
     } else {
         // For 3+ objects, use comma-separated list with "and" before the last item
-        const lastObject = objectNames.pop();
-        return `I see a ${objectNames.join(', a ')}, and a ${lastObject}`;
+        const lastObject = uniqueObjects.pop();
+        const prefixLast = isName(lastObject) ? '' : 'a ';
+        
+        const formattedObjects = uniqueObjects.map(obj => {
+            const prefix = isName(obj) ? '' : 'a ';
+            return `${prefix}${obj}`;
+        });
+        
+        return `I see ${formattedObjects.join(', ')}, and ${prefixLast}${lastObject}`;
     }
 }
 
