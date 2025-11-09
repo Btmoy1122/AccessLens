@@ -1094,7 +1094,6 @@ async function startSignRecognition() {
         return;
     }
     
-<<<<<<< HEAD
     // Lazy-load module if not initialized
     if (!isSignInitialized()) {
         console.log('Lazy-loading sign language recognition...');
