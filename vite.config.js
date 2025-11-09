@@ -52,8 +52,10 @@ export default defineConfig({
   publicDir: '../assets',
   
   // Optimize dependencies
+  // Note: aframe and ar.js removed since they're not currently used
+  // Add them back when AR features are implemented
   optimizeDeps: {
-    include: ['aframe', 'ar.js'],
+    // include: ['aframe', 'ar.js'], // Commented out - not installed yet
   },
 });
 
