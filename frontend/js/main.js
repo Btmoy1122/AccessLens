@@ -257,42 +257,17 @@ function initializeApp() {
         
         // Start speech recognition for voice commands (always runs in background)
         // This allows voice commands to work even when captions are off
-        // On mobile, speech recognition may have limitations, so we handle it differently
         setTimeout(() => {
-            // Check if we're on mobile
-            const isMobile = window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
-            const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-            
-            if (isMobile) {
-                console.log('Mobile device detected - speech recognition may have limitations');
-                if (isIOS) {
-                    console.warn('iOS device detected - Web Speech API has limited support and may require user interaction');
-                    // Show a helpful message to user
-                    showMobileVoiceCommandInfo();
-                }
-            }
-            
             if (appState.cameraReady) {
-                // Try to start recognition, but don't fail silently on mobile
-                const started = startListening();
-                if (started) {
-                    console.log('Voice command recognition started');
-                } else if (isMobile) {
-                    console.warn('Voice command recognition failed to start on mobile - this is expected on some devices');
-                    showMobileVoiceCommandInfo();
-                }
+                startListening(); // Start recognition for voice commands
+                console.log('Voice command recognition started');
             } else {
                 // Wait for camera to be ready
                 const checkCamera = setInterval(() => {
                     if (appState.cameraReady) {
                         clearInterval(checkCamera);
-                        const started = startListening();
-                        if (started) {
-                            console.log('Voice command recognition started');
-                        } else if (isMobile) {
-                            console.warn('Voice command recognition failed to start on mobile');
-                            showMobileVoiceCommandInfo();
-                        }
+                        startListening();
+                        console.log('Voice command recognition started');
                     }
                 }, 500);
             }
@@ -3223,54 +3198,6 @@ function closeHandMenu() {
     // }
     
     console.log('Hand menu closed');
-}
-
-/**
- * Show info message about mobile voice commands
- */
-function showMobileVoiceCommandInfo() {
-    // Only show once per session
-    if (sessionStorage.getItem('mobileVoiceCommandInfoShown')) {
-        return;
-    }
-    sessionStorage.setItem('mobileVoiceCommandInfoShown', 'true');
-    
-    // Create a temporary notification
-    const notification = document.createElement('div');
-    notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: rgba(0, 0, 0, 0.9);
-        color: #fff;
-        padding: 16px 24px;
-        border-radius: 12px;
-        font-size: 14px;
-        text-align: center;
-        z-index: 10000;
-        max-width: 90%;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-        border: 2px solid rgba(74, 144, 226, 0.5);
-    `;
-    notification.innerHTML = `
-        <strong>Voice Commands on Mobile</strong><br>
-        Voice commands may not work reliably on mobile devices.<br>
-        Use the hand menu or sidebar buttons instead.
-    `;
-    
-    document.body.appendChild(notification);
-    
-    // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-        notification.style.opacity = '0';
-        notification.style.transition = 'opacity 0.3s ease';
-        setTimeout(() => {
-            if (notification.parentNode) {
-                notification.parentNode.removeChild(notification);
-            }
-        }, 300);
-    }, 5000);
 }
 
 /**
